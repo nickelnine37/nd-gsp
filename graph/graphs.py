@@ -4,9 +4,11 @@ from numpy.linalg import eigh
 import networkx as nx
 from typing import Union
 from scipy.sparse import spmatrix, csr_array
+from scipy.sparse.csgraph import minimum_spanning_tree
+from scipy.spatial.distance import pdist, squareform
 
 from utils.kronecker import KroneckerSum, KroneckerProduct
-from utils.linalg import spdiag, multiply_tensor_product
+from utils.linalg import spdiag
 from utils.gsp import check_valid_adjacency, check_valid_laplacian
 
 class BaseGraph:
@@ -39,7 +41,6 @@ class BaseGraph:
         Perform Graph Fourier Transform on a graph signal Y
         """
         self.decompose()
-        # return tensor_product(Y, *[graph.U.T for graph in self.graphs])
         return self.U.T @ Y
 
     def rGFT(self, Z: ndarray) -> ndarray:
@@ -47,7 +48,6 @@ class BaseGraph:
         Perform reverse Graph Fourier Transform on a fourier coefficients Z
         """
         self.decompose()
-        # return tensor_product(Z, *[graph.U for graph in self.graphs])
         return self.U @ Z
 
     def scale_spectral(self, Y: ndarray, G: ndarray):
@@ -100,6 +100,42 @@ class Graph(BaseGraph):
         A[0, -1] = 1
         A = A + A.T
         return cls(A=A)
+
+
+    @classmethod
+    def random_tree(cls, N: int, seed: int=0):
+        """
+        Create a random tree graph of size N
+        """
+        np.random.seed(seed)
+
+        x = np.random.randn(N, 1)
+        D = squareform(pdist(x))
+        A = minimum_spanning_tree(D).toarray().astype(bool)
+        A = A + A.T
+
+        return cls(A=A.astype(float))
+
+    @classmethod
+    def random_connected(cls, N: int, n_loops: int=2, seed: int=0):
+        """
+        Create a random graph with edges that is the union of `n_loops` runs of the
+        perturbed minimum sopanning tree algorithm. The resulting graph is fully
+        connected, but is not a tree.
+        """
+        np.random.seed(seed)
+
+        x = np.random.randn(N, 1)
+        D = squareform(pdist(x))
+        A = minimum_spanning_tree(D).toarray().astype(bool)
+        A = A + A.T
+
+        for i in range(n_loops - 1):
+            D = squareform(pdist(x + np.random.randn(N, 1) / 50))
+            A_ = minimum_spanning_tree(D).toarray().astype(bool)
+            A += (A_ + A_.T)
+
+        return cls(A=A.astype(float))
 
 
     def __init__(self,
@@ -241,7 +277,7 @@ class ProductGraph(BaseGraph):
             graph.decompose()
 
         self.U = KroneckerProduct(*[graph.U for graph in self.graphs])
-        self.lam =  sum(np.meshgrid(*[graph.lam for graph in self.graphs]))
+        self.lam = sum(np.meshgrid(*[graph.lam for graph in self.graphs]))
         self.decomposed = True
 
     def __repr__(self):
@@ -250,3 +286,17 @@ class ProductGraph(BaseGraph):
     def __str__(self):
         return f'Graph(N={" x ".join([str(graph.N) for graph in self.graphs])})'
 
+
+
+def _run_tests():
+
+
+
+    def test_graph():
+
+        pass
+
+
+    def test_product_graph():
+
+        pass

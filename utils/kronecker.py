@@ -229,8 +229,9 @@ class KroneckerCoposite(KroneckerBase):
 
 
 
-def run_tests():
+def _run_tests(seed: int=0):
 
+    np.random.seed(seed)
     N1 = 3; N2 = 4; N3 = 5
     A1 = np.random.randn(N1, N1)
     A2 = np.random.randn(N2, N2)
@@ -284,5 +285,5 @@ def run_tests():
 
 if __name__ == '__main__':
 
-    run_tests()
+    _run_tests(seed=0)
 
