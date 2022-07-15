@@ -290,13 +290,25 @@ class ProductGraph(BaseGraph):
 
 def _run_tests():
 
-
-
     def test_graph():
-
-        pass
-
+        N = 100
+        graph = Graph.random_tree(N)
+        signal = np.random.randn(N)
+        assert np.allclose(signal, graph.rGFT(graph.GFT(signal)))
 
     def test_product_graph():
 
-        pass
+        N1 = 100; N2 = 150
+        graph = ProductGraph.lattice(N1, N2)
+        signal = np.random.randn(N2, N1)
+        assert np.allclose(signal, graph.rGFT(graph.GFT(signal)))
+
+    test_graph()
+    test_product_graph()
+
+    print('all tests passed')
+
+
+if __name__ == '__main__':
+
+    _run_tests()
