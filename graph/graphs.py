@@ -6,7 +6,7 @@ from typing import Union
 from scipy.sparse import spmatrix, csr_array
 
 from utils.kronecker import KroneckerSum, KroneckerProduct
-from utils.linalg import spdiag, tensor_product
+from utils.linalg import spdiag, multiply_tensor_product
 from utils.gsp import check_valid_adjacency, check_valid_laplacian
 
 class BaseGraph:

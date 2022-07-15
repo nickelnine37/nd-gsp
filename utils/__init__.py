@@ -1,14 +1,3 @@
-import numpy as np
-from numpy import ndarray, diag
-from scipy.sparse import csr_array, spmatrix, triu as sptriu, tril as sptril
-from typing import Union
-
-
-
-
-
-
-
 
 def isnumeric(obj) -> bool:
     """
@@ -20,6 +9,5 @@ def isnumeric(obj) -> bool:
         return True
 
     except TypeError:
-        return False#
-
+        return False
 

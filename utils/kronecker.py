@@ -1,8 +1,9 @@
+import numpy as np
 from numpy import ndarray
 from typing import Union
 from numpy.linalg import inv
 
-from utils.linalg import vec, tensor_product, tensor_product_of_sum, mat
+from utils.linalg import vec, multiply_tensor_product, multiply_tensor_sum, ten, kronecker_product_literal, kronecker_sum_literal
 from scipy.sparse import spmatrix
 
 """
@@ -26,6 +27,8 @@ class KroneckerBase:
     """
     Abstract base class defining the behaviour of Kronecker-type objects
     """
+
+    __array_priority__ = 10     # increase priority of class, so it takes precedence when mixing matrix multiplications with ndarrays
 
     def __matmul__(self, other: Union['KroneckerBase', ndarray]) -> Union['KroneckerBase', ndarray]:
         """
@@ -83,10 +86,10 @@ class KroneckerProduct(KroneckerBase):
 
         if isinstance(other, ndarray):
             if other.ndim == 1:
-                return vec(tensor_product(mat(other, shape=tuple(reversed(self.shapes))), *self.As))
+                return vec(multiply_tensor_product(ten(other, shape=tuple(reversed(self.shapes))), *self.As))
             else:
                 assert other.ndim == self.ndim
-                return tensor_product(other, *self.As)
+                return multiply_tensor_product(other, *self.As)
 
         if isinstance(other, KroneckerBase):
             return KroneckerCoposite(self, other)
@@ -123,10 +126,10 @@ class KroneckerSum(KroneckerBase):
 
         if isinstance(other, ndarray):
             if other.ndim == 1:
-                return vec(tensor_product_of_sum(mat(other, shape=tuple(reversed(self.shapes))), *self.As))
+                return vec(multiply_tensor_sum(ten(other, shape=tuple(reversed(self.shapes))), *self.As))
             else:
                 assert other.ndim == self.ndim
-                return tensor_product_of_sum(other, *self.As)
+                return multiply_tensor_sum(other, *self.As)
 
         if isinstance(other, KroneckerBase):
             return KroneckerCoposite(self, other)
@@ -223,3 +226,63 @@ class KroneckerCoposite(KroneckerBase):
 
     def __str__(self):
         return 'KroneckerCoposite({})'.format(', '.join([str(kron) for kron in self.krons]))
+
+
+
+def run_tests():
+
+    N1 = 3; N2 = 4; N3 = 5
+    A1 = np.random.randn(N1, N1)
+    A2 = np.random.randn(N2, N2)
+    A3 = np.random.randn(N3, N3)
+    X = np.random.randn(N3, N2, N1)
+    d = np.random.randn(N1 * N2 * N3)
+
+    def test_kronecker_product():
+
+        kp_literal = kronecker_product_literal(A1, A2, A3)
+        kp_optimised = KroneckerProduct(A1, A2, A3)
+
+        assert np.allclose(kp_literal @ vec(X), kp_optimised @ vec(X))                      # test forward matrix multiplication
+        assert np.allclose(vec(X) @ kp_literal, vec(X) @ kp_optimised)                      # test backward matrix multiplication
+        assert np.isclose(vec(X) @ kp_literal @ vec(X), kp_optimised.quadratic_form(X))     # test quadratic form
+
+    def test_kronecker_sum():
+
+        ks_literal = kronecker_sum_literal(A1, A2, A3)
+        ks_optimised = KroneckerSum(A1, A2, A3)
+
+        assert np.allclose(ks_literal @ vec(X), ks_optimised @ vec(X))                      # test forward matrix multiplication
+        assert np.allclose(vec(X) @ ks_literal, vec(X) @ ks_optimised)                      # test backward matrix multiplication
+        assert np.isclose(vec(X) @ ks_literal @ vec(X), ks_optimised.quadratic_form(X))     # test quadratic form
+
+    def test_kronecker_diag():
+
+        kd_literal = np.diag(d)
+        kd_optimised = KroneckerDiag(ten(d, like=X))
+
+        assert np.allclose(kd_literal @ vec(X), kd_optimised @ vec(X))                      # test forward matrix multiplication
+        assert np.allclose(vec(X) @ kd_literal, vec(X) @ kd_optimised)                      # test backward matrix multiplication
+        assert np.isclose(vec(X) @ kd_literal @ vec(X), kd_optimised.quadratic_form(X))     # test quadratic form
+
+    def test_kronecker_composite():
+
+        kc_literal = kronecker_sum_literal(A1, A2, A3) @  np.diag(d) @ kronecker_product_literal(A1, A2, A3)
+        kc_optimised = KroneckerCoposite(KroneckerSum(A1, A2, A3), KroneckerDiag(ten(d, like=X)), KroneckerProduct(A1, A2, A3))
+
+        assert np.allclose(kc_literal @ vec(X), kc_optimised @ vec(X))                      # test forward matrix multiplication
+        assert np.allclose(vec(X) @ kc_literal, vec(X) @ kc_optimised)                      # test backward matrix multiplication
+        assert np.isclose(vec(X) @ kc_literal @ vec(X), kc_optimised.quadratic_form(X))     # test quadratic form
+
+    test_kronecker_product()
+    test_kronecker_sum()
+    test_kronecker_diag()
+    test_kronecker_composite()
+
+    print('All tests passed')
+
+
+if __name__ == '__main__':
+
+    run_tests()
+

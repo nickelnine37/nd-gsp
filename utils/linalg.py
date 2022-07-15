@@ -4,37 +4,9 @@ from scipy.sparse import csr_array, spmatrix, triu as sptriu, tril as sptril
 from typing import Union
 
 
-def spdiag(data: Union[ndarray, spmatrix]) -> Union[ndarray, spmatrix]:
+def multiply_tensor_product(X: ndarray, *As) -> ndarray:
     """
-    Sparse edquivelent of numpy function np.diag. If data is 1D ndarray, return sparse
-    matrix with this along the diagonal. If data is a spmatrix, return the diagonal as
-    an ndarray
-
-    Parameters
-    ----------
-    data            ndarray or spamtrix
-
-    Returns
-    -------
-    diag            diagonal spmatrix or diagonal of spmatrix
-    """
-
-    if isinstance(data, ndarray):
-        if data.ndim != 1:
-            raise ValueError('data should be a 1D numpy array')
-        N = len(data)
-        return csr_array((data, (np.arange(N), np.arange(N))), shape=(N, N))
-
-    elif isinstance(data, spmatrix):
-        return data.diagonal()
-
-    else:
-        raise ValueError('data should be ndarray or spmatrix')
-
-
-def tensor_product(X: ndarray, *As):
-    """
-    Compute the product Ten((A1 ⊗ A2 ⊗ ... ⊗ AN) vec(X))
+    Optimised routine to compute the result of Ten((A1 ⊗ A2 ⊗ ... ⊗ AN) vec(X))
 
     e.g:
 
@@ -55,9 +27,9 @@ def tensor_product(X: ndarray, *As):
 
 
 
-def tensor_product_of_sum(X: ndarray, *As):
+def multiply_tensor_sum(X: ndarray, *As) -> ndarray:
     """
-    Compute the product Ten((A1 ⊕ A2 ⊕ ... ⊕ AN) vec(X))
+    Optimised routine to compute the result of Ten((A1 ⊕ A2 ⊕ ... ⊕ AN) vec(X))
 
     e.g:
 
@@ -79,14 +51,40 @@ def tensor_product_of_sum(X: ndarray, *As):
     return ans
 
 
+def kronecker_product_literal(*As) -> ndarray:
+    """
+    Create an array that is the literal Kronecker product of square matrices *As. This should
+    never be called for real applications, only used to test the correctness of more optimised
+    routines.
+    """
+    if len(As) == 2:
+        return np.kron(As[0], As[1])
+    else:
+        return np.kron(As[0], kronecker_product_literal(*As[1:]))
+
+
+def kronecker_sum_literal(*As) -> ndarray:
+    """
+    Create an array that is the literal Kronecker sum of square matrices *As. This should never
+    be called for real applications, only used to test the correctness of optimised routines.
+    """
+    tot = 0.0
+    for i in range(len(As)):
+        Ais = [np.eye(len(Ai)) for Ai in As]
+        Ais[i] = As[i]
+        tot += kronecker_product_literal(*Ais)
+
+    return tot
+
+
 def vec(X: ndarray) -> ndarray:
     """
-    Convert a tensor of any shape into a vector
+    Convert a tensor X of any shape into a vector
     """
     return X.reshape(-1, order='F')
 
 
-def mat(x: ndarray, shape: tuple=None, like: ndarray=None) -> ndarray:
+def ten(x: ndarray, shape: tuple=None, like: ndarray=None) -> ndarray:
     """
     Convert a vector x into a tensor of a given shape
     """
@@ -118,3 +116,31 @@ def is_diag(A: ndarray) -> bool:
     assert m == n, f'A should be square but it has shape {(m, n)}'
     p, q = A.strides
     return not np.any(np.lib.stride_tricks.as_strided(A[:, 1:], (m - 1, m), (p + q, q)))
+
+
+def spdiag(data: Union[ndarray, spmatrix]) -> Union[ndarray, spmatrix]:
+    """
+    Sparse edquivelent of numpy function np.diag. If data is 1D ndarray, return sparse
+    matrix with this along the diagonal. If data is a spmatrix, return the diagonal as
+    an ndarray
+
+    Parameters
+    ----------
+    data            ndarray or spamtrix
+
+    Returns
+    -------
+    diag            diagonal spmatrix or diagonal of spmatrix
+    """
+
+    if isinstance(data, ndarray):
+        if data.ndim != 1:
+            raise ValueError('data should be a 1D numpy array')
+        N = len(data)
+        return csr_array((data, (np.arange(N), np.arange(N))), shape=(N, N))
+
+    elif isinstance(data, spmatrix):
+        return data.diagonal()
+
+    else:
+        raise ValueError('data should be ndarray or spmatrix')
