@@ -2,6 +2,8 @@ import numpy as np
 from numpy import ndarray, diag
 from scipy.sparse import csr_array, spmatrix, triu as sptriu, tril as sptril
 from typing import Union
+import networkx as nx
+from graph.graphs import BaseGraph, Graph
 
 
 def check_valid_adjacency(A: Union[ndarray, spmatrix], directed=False, self_loops=False) -> bool:
@@ -54,3 +56,17 @@ def check_valid_laplacian(L: Union[ndarray, spmatrix]) -> bool:
 
     return True
 
+
+def check_valid_graph( graph: Union[BaseGraph, ndarray, nx.Graph]) -> BaseGraph:
+
+    if isinstance(graph, BaseGraph):
+        return graph
+
+    elif isinstance(graph, ndarray):
+        return Graph.from_adjacency(graph)
+
+    elif isinstance(graph, nx.Graph):
+        return Graph.from_networkx(graph)
+
+    else:
+        raise TypeError('argument `graph` should be an ndarray, a Graph or a nx.Graph')

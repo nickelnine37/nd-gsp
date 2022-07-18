@@ -258,6 +258,7 @@ class ProductGraph(BaseGraph):
         self.decomposed = all(graph.decomposed for graph in self.graphs)
         self.ndim = len(graphs)
         self.N = int(np.prod([graph.N for graph in graphs]))
+        self.lams = None
 
         self.A = KroneckerSum(*[graph.A for graph in graphs])
         self.A_ = KroneckerSum(*[graph.A_ for graph in graphs])
@@ -277,7 +278,8 @@ class ProductGraph(BaseGraph):
             graph.decompose()
 
         self.U = KroneckerProduct(*[graph.U for graph in self.graphs])
-        self.lam = sum(np.meshgrid(*[graph.lam for graph in self.graphs]))
+        self.lams = np.array(np.meshgrid(*[g.lam for g in reversed(self.graphs)], indexing='ij'))
+        self.lam = self.lams.sum(0)
         self.decomposed = True
 
     def __repr__(self):

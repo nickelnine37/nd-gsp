@@ -1,6 +1,6 @@
 from graph.graphs import Graph, ProductGraph
 from graph.signals import PartiallyObservedGraphSignal, PartiallyObservedProductGraphSignal
-from graph.filters import GraphFilter, SpaceTimeGraphFilter
+from graph.filters import UnivariateFilterFunction, MultivariateFilterFunction
 from typing import Union
 from numpy import eye as I, diag
 from numpy.linalg import solve, inv
@@ -8,7 +8,7 @@ from numpy.linalg import solve, inv
 
 class GraphSignalReconstructor:
 
-    def __init__(self, graph: Graph, signal: PartiallyObservedGraphSignal, filter: GraphFilter, gamma: float):
+    def __init__(self, graph: Graph, signal: PartiallyObservedGraphSignal, filter: UnivariateFilterFunction, gamma: float):
         self.graph = graph
         self.signal = signal
         self.filter = filter
@@ -32,7 +32,7 @@ class GraphSignalReconstructor:
 
 class ProductGraphSignalReconstructor:
 
-    def __init__(self, graph: ProductGraph, signal: PartiallyObservedProductGraphSignal, filter: Union[GraphFilter, SpaceTimeGraphFilter], gamma: float):
+    def __init__(self, graph: ProductGraph, signal: PartiallyObservedProductGraphSignal, filter: Union[UnivariateFilterFunction, MultivariateFilterFunction], gamma: float):
 
         self.graph = graph
         self.signal = signal
@@ -41,7 +41,7 @@ class ProductGraphSignalReconstructor:
 
     def get_f(self, method='cgm'):
 
-        if isinstance(self.filter, SpaceTimeGraphFilter):
+        if isinstance(self.filter, MultivariateFilterFunction):
             G2 = self.filter(self.graph.LamN, self.graph.LamT) ** 2
         else:
             G2 = self.filter(self.graph.Lam) ** 2

@@ -3,7 +3,40 @@ import numpy as np
 from typing import Callable
 
 
-class GraphFilter:
+class FilterFunction: 
+    
+    def __init__(self, filter: Callable, beta: float):
+        self.filter = filter
+        self.beta = beta
+
+    @classmethod
+    def random_walk(cls, beta: ndarray):
+        raise NotImplementedError
+
+    @classmethod
+    def diffusion(cls, beta: ndarray):
+        raise NotImplementedError
+
+    @classmethod
+    def ReLu(cls, beta: ndarray):
+        raise NotImplementedError
+
+    @classmethod
+    def sigmoid(cls, beta: ndarray):
+        raise NotImplementedError
+
+    @classmethod
+    def bandlimited(cls, beta: ndarray):
+        raise NotImplementedError
+
+    def set_beta(self, beta: ndarray):
+        raise NotImplementedError
+
+    def __call__(self, Lams: ndarray):
+        raise NotImplementedError
+
+
+class UnivariateFilterFunction(FilterFunction):
     """
     Class to represent a simple graph filter. Initialise with one of the constructors:
 
@@ -44,8 +77,8 @@ class GraphFilter:
     """
 
     def __init__(self, filter: Callable, beta: float):
-        self.filter = filter
-        self.beta = beta
+        super().__init__(filter, beta)
+
 
     @classmethod
     def random_walk(cls, beta: float):
@@ -74,7 +107,7 @@ class GraphFilter:
         return self.filter(lam, self.beta)
 
 
-class SpaceTimeGraphFilter:
+class MultivariateFilterFunction(FilterFunction):
     """
     This slightly more complex filter type can handle different parameters in
     different dimensions. We have  list of parameters, betas, and a list of
@@ -97,38 +130,38 @@ class SpaceTimeGraphFilter:
 
     """
 
-    def __init__(self, filter: Callable, betas: ndarray):
+    def __init__(self, filter: Callable, beta: ndarray):
         self.filter = filter
-        self.betas = betas
-        self.n = len(betas)
+        self.betas = beta
+        self.n = len(beta)
 
     @classmethod
-    def random_walk(cls, betas: ndarray):
-        return cls(lambda Lams, betas_: (1 + sum(beta * Lam for beta, Lam in zip(betas_, Lams))) ** -1, betas)
+    def random_walk(cls, beta: ndarray):
+        return cls(lambda Lams, betas_: (1 + sum(beta * Lam for beta, Lam in zip(betas_, Lams))) ** -1, beta)
 
     @classmethod
-    def diffusion(cls, betas: ndarray):
-        return cls(lambda Lams, betas_: exp(- sum(beta * Lam for beta, Lam in zip(betas_, Lams))), betas)
+    def diffusion(cls, beta: ndarray):
+        return cls(lambda Lams, betas_: exp(- sum(beta * Lam for beta, Lam in zip(betas_, Lams))), beta)
 
     @classmethod
-    def ReLu(cls, betas: ndarray):
-        return cls(lambda Lams, betas_: np.maximum(1 - sum(beta * Lam for beta, Lam in zip(betas_, Lams)), 0), betas)
+    def ReLu(cls, beta: ndarray):
+        return cls(lambda Lams, betas_: np.maximum(1 - sum(beta * Lam for beta, Lam in zip(betas_, Lams)), 0), beta)
 
     @classmethod
-    def sigmoid(cls, betas: ndarray):
+    def sigmoid(cls, beta: ndarray):
         def fil(Lams, betas_):
             E = exp(-sum(beta * Lam for beta, Lam in zip(betas_, Lams)))
             return 2 * E * (1 + E) ** -1
 
-        return cls(fil, betas)
+        return cls(fil, beta)
 
     @classmethod
-    def bandlimited(cls, betas: ndarray):
-        return cls(lambda Lams, betas_: np.all([beta * Lam < 1 for beta, Lam in zip(betas_, Lams)], axis=0).astype(float), betas)
+    def bandlimited(cls, beta: ndarray):
+        return cls(lambda Lams, betas_: np.all([beta * Lam < 1 for beta, Lam in zip(betas_, Lams)], axis=0).astype(float), beta)
 
-    def set_betas(self, betas: ndarray):
-        assert len(betas) == self.n, f'betas should be length {self.n} but it is length {len(betas)}'
-        self.betas = betas
+    def set_beta(self, beta: ndarray):
+        assert len(beta) == self.n, f'beta should be length {self.n} but it is length {len(beta)}'
+        self.betas = beta
 
     def __call__(self, Lams: ndarray):
         assert len(Lams) == self.n, f'Lams should be length {self.n} but it is length {len(Lams)}'
