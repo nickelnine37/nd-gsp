@@ -19,6 +19,8 @@ class BaseGraph:
     # inheriting classes need to fill these variables
 
     N = None                # number of nodes in the graph
+    ndim = None             # 1 for SimpleGraph, n for product graph
+    signal_shape = None     # the shape that signals defined on this graph should be
 
     A = None                # dense adjacency matrix
     A_ = None               # sparse adjacancy matrix
@@ -29,6 +31,8 @@ class BaseGraph:
     decomposed = None       # whether eigendecomposition has been performed
     U = None                # eigenvector matrix
     lam = None              # eigenvalue vector
+
+
 
     def decompose(self):
         """
@@ -220,10 +224,13 @@ class Graph(BaseGraph):
             self.graph = nx.from_scipy_sparse_array(self.A_)
 
         self.N = len(self.A)
+        self.signal_shape = (self.N, )
 
         self.decomposed = False
         self.lam = None
         self.U = None
+        self.ndim = 1
+
 
     def decompose(self):
         """
@@ -258,6 +265,7 @@ class ProductGraph(BaseGraph):
         self.decomposed = all(graph.decomposed for graph in self.graphs)
         self.ndim = len(graphs)
         self.N = int(np.prod([graph.N for graph in graphs]))
+        self.signal_shape = (graph.N for graph in reversed(graphs))
         self.lams = None
 
         self.A = KroneckerSum(*[graph.A for graph in graphs])

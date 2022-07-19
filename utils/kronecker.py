@@ -23,20 +23,20 @@ matrices.
 """
 
 
-class KroneckerBase:
+class KroneckerOperator:
     """
     Abstract base class defining the behaviour of Kronecker-type objects
     """
 
     __array_priority__ = 10     # increase priority of class, so it takes precedence when mixing matrix multiplications with ndarrays
 
-    def __matmul__(self, other: Union['KroneckerBase', ndarray]) -> Union['KroneckerBase', ndarray]:
+    def __matmul__(self, other: Union['KroneckerOperator', ndarray]) -> Union['KroneckerOperator', ndarray]:
         """
         All inheriting classes should implement this method
         """
         raise NotImplementedError
 
-    def __rmatmul__(self, other: Union['KroneckerBase', ndarray]) -> Union['KroneckerBase', ndarray]:
+    def __rmatmul__(self, other: Union['KroneckerOperator', ndarray]) -> Union['KroneckerOperator', ndarray]:
         return (self.T @ other.T).T
 
     def quadratic_form(self, X: ndarray):
@@ -66,7 +66,7 @@ def check_valid_operators(*As):
     assert all(A.shape[0] == A.shape[1] for A in As)
 
 
-class KroneckerProduct(KroneckerBase):
+class KroneckerProduct(KroneckerOperator):
     """
     Used to represent the object (A1 ⊗ A2 ⊗ ... ⊗ AN), that is the Kronecker product of N square matrices.
     """
@@ -77,7 +77,7 @@ class KroneckerProduct(KroneckerBase):
         self.ndim = len(As)
         self.shapes = [A.shape[0] for A in As]
 
-    def __matmul__(self, other: Union[KroneckerBase, ndarray]) -> Union[KroneckerBase, ndarray]:
+    def __matmul__(self, other: Union[KroneckerOperator, ndarray]) -> Union[KroneckerOperator, ndarray]:
 
         if isinstance(other, KroneckerProduct):
             assert len(self.As) == len(other.As)
@@ -91,7 +91,7 @@ class KroneckerProduct(KroneckerBase):
                 assert other.ndim == self.ndim
                 return multiply_tensor_product(other, *self.As)
 
-        if isinstance(other, KroneckerBase):
+        if isinstance(other, KroneckerOperator):
             return KroneckerCoposite(self, other)
 
         else:
@@ -111,7 +111,7 @@ class KroneckerProduct(KroneckerBase):
         return 'KroneckerProduct({})'.format(' ⊗ '.join([str(len(A)) for A in self.As]))
 
 
-class KroneckerSum(KroneckerBase):
+class KroneckerSum(KroneckerOperator):
     """
     Used to represent the object (A1 ⊕ A2 ⊕ ... ⊕ AN), that is the Kronecker sum of N square matrices.
     """
@@ -122,7 +122,7 @@ class KroneckerSum(KroneckerBase):
         self.ndim = len(As)
         self.shapes = [A.shape[0] for A in As]
 
-    def __matmul__(self, other: Union[KroneckerBase, ndarray]) -> Union[KroneckerBase, ndarray]:
+    def __matmul__(self, other: Union[KroneckerOperator, ndarray]) -> Union[KroneckerOperator, ndarray]:
 
         if isinstance(other, ndarray):
             if other.ndim == 1:
@@ -131,7 +131,7 @@ class KroneckerSum(KroneckerBase):
                 assert other.ndim == self.ndim
                 return multiply_tensor_sum(other, *self.As)
 
-        if isinstance(other, KroneckerBase):
+        if isinstance(other, KroneckerOperator):
             return KroneckerCoposite(self, other)
 
         else:
@@ -148,7 +148,7 @@ class KroneckerSum(KroneckerBase):
         return 'KroneckerSum({})'.format(' ⊕ '.join([str(len(A)) for A in self.As]))
 
 
-class KroneckerDiag(KroneckerBase):
+class KroneckerDiag(KroneckerOperator):
     """
     Used to represent a general diagonal matrix of size N1 x N2 x ... x NN
     """
@@ -164,7 +164,7 @@ class KroneckerDiag(KroneckerBase):
         self.A = A
         self.ndim = A.ndim
 
-    def __matmul__(self, other: Union[KroneckerBase, ndarray]) -> Union[KroneckerBase, ndarray]:
+    def __matmul__(self, other: Union[KroneckerOperator, ndarray]) -> Union[KroneckerOperator, ndarray]:
 
         if isinstance(other, ndarray):
             if other.ndim == 1:
@@ -173,7 +173,7 @@ class KroneckerDiag(KroneckerBase):
                 assert other.ndim == self.ndim
                 return self.A * other
 
-        elif isinstance(other, KroneckerBase):
+        elif isinstance(other, KroneckerOperator):
             return KroneckerCoposite(self, other)
 
         else:
@@ -193,17 +193,17 @@ class KroneckerDiag(KroneckerBase):
         return 'KroneckerDiag{}'.format(self.A.shape)
 
 
-class KroneckerCoposite(KroneckerBase):
+class KroneckerCoposite(KroneckerOperator):
     """
-    Used to represent a chain of Kronecker objects
+    Used to represent a chain of Kronecker objects mattrix multiplied together
     """
 
     def __init__(self, *krons):
-        assert all(isinstance(A, KroneckerBase) for A in krons), 'All matrices passed should be of Kronecker type'
+        assert all(isinstance(A, KroneckerOperator) for A in krons), 'All matrices passed should be of Kronecker type'
         self.krons = sum([[A] if not isinstance(A, KroneckerCoposite) else [AA for AA in A.krons] for A in krons], [])
 
 
-    def __matmul__(self, other: Union[KroneckerBase, ndarray]) -> Union[KroneckerBase, ndarray]:
+    def __matmul__(self, other: Union[KroneckerOperator, ndarray]) -> Union[KroneckerOperator, ndarray]:
 
         if isinstance(other, ndarray):
             out = self.krons[-1] @ other
@@ -211,7 +211,7 @@ class KroneckerCoposite(KroneckerBase):
                 out = kron @ out
             return out
 
-        elif isinstance(other, KroneckerBase):
+        elif isinstance(other, KroneckerOperator):
             return KroneckerCoposite(*self.krons, other)
 
     def inv(self):

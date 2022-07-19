@@ -3,20 +3,6 @@ import numpy as np
 # import pandas as pd
 # from typing import Union
 
-class GraphSignal:
-    """
-    A simple length-N graph signal existing in a graph. This is a very thin wrapper
-    on a ndarray of size (N, )
-    """
-
-    def __init__(self, y: ndarray):
-
-        assert isinstance(y, ndarray), 'y should be an ndarray'
-        assert y.ndim == 1, 'y should be 1-dimensional'
-
-        self.y = y
-        self.N = len(y)
-
 
 class PartiallyObservedGraphSignal:
     """
@@ -79,15 +65,6 @@ class PartiallyObservedGraphSignal:
 
 
 
-class ProductGraphSignal:
-
-    def __init__(self, Y: ndarray):
-
-        assert isinstance(Y, ndarray), 'Y should be an ndarray'
-        assert Y.ndim == 2, 'Y should be 2-dimensional'
-
-        self.Y = Y
-        self.N, self.T = Y.shape
 
 
 class PartiallyObservedProductGraphSignal:

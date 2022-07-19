@@ -1,35 +1,40 @@
 from numpy import ndarray, exp
 import numpy as np
-from typing import Callable
+from typing import Callable, Union
 
 
-class FilterFunction: 
+class FilterFunction:
+
+    # inheriting classes should create these instance variables
+    filter = None
+    beta = None
+    ndim = None
     
-    def __init__(self, filter: Callable, beta: float):
+    def __init__(self, filter: Callable, beta: Union[float, ndarray]):
         self.filter = filter
         self.beta = beta
 
     @classmethod
-    def random_walk(cls, beta: ndarray):
+    def random_walk(cls, beta: Union[float, ndarray]):
         raise NotImplementedError
 
     @classmethod
-    def diffusion(cls, beta: ndarray):
+    def diffusion(cls, beta: Union[float, ndarray]):
         raise NotImplementedError
 
     @classmethod
-    def ReLu(cls, beta: ndarray):
+    def ReLu(cls, beta: Union[float, ndarray]):
         raise NotImplementedError
 
     @classmethod
-    def sigmoid(cls, beta: ndarray):
+    def sigmoid(cls, beta: Union[float, ndarray]):
         raise NotImplementedError
 
     @classmethod
-    def bandlimited(cls, beta: ndarray):
+    def bandlimited(cls, beta: Union[float, ndarray]):
         raise NotImplementedError
 
-    def set_beta(self, beta: ndarray):
+    def set_beta(self, beta: Union[float, ndarray]):
         raise NotImplementedError
 
     def __call__(self, Lams: ndarray):
@@ -78,7 +83,7 @@ class UnivariateFilterFunction(FilterFunction):
 
     def __init__(self, filter: Callable, beta: float):
         super().__init__(filter, beta)
-
+        self.ndim = 1
 
     @classmethod
     def random_walk(cls, beta: float):
@@ -131,9 +136,8 @@ class MultivariateFilterFunction(FilterFunction):
     """
 
     def __init__(self, filter: Callable, beta: ndarray):
-        self.filter = filter
-        self.betas = beta
-        self.n = len(beta)
+        super().__init__(filter, beta)
+        self.ndim = len(beta)
 
     @classmethod
     def random_walk(cls, beta: ndarray):
@@ -160,9 +164,9 @@ class MultivariateFilterFunction(FilterFunction):
         return cls(lambda Lams, betas_: np.all([beta * Lam < 1 for beta, Lam in zip(betas_, Lams)], axis=0).astype(float), beta)
 
     def set_beta(self, beta: ndarray):
-        assert len(beta) == self.n, f'beta should be length {self.n} but it is length {len(beta)}'
-        self.betas = beta
+        assert len(beta) == self.ndim, f'beta should be length {self.ndim} but it is length {len(beta)}'
+        self.beta = beta
 
     def __call__(self, Lams: ndarray):
-        assert len(Lams) == self.n, f'Lams should be length {self.n} but it is length {len(Lams)}'
-        return self.filter(Lams, self.betas)
+        assert len(Lams) == self.ndim, f'Lams should be length {self.ndim} but it is length {len(Lams)}'
+        return self.filter(Lams, self.beta)
