@@ -1,7 +1,7 @@
 from graph.graphs import BaseGraph, Graph, ProductGraph
 from graph.signals import PartiallyObservedGraphSignal, PartiallyObservedProductGraphSignal
 from graph.filters import FilterFunction, UnivariateFilterFunction, MultivariateFilterFunction
-from utils.gsp import check_valid_graph, check_compatible
+from utils.checks import check_valid_graph, check_compatible
 
 from typing import Union
 from numpy import eye as I, diag, ndarray

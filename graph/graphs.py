@@ -11,6 +11,7 @@ from utils.kronecker import KroneckerSum, KroneckerProduct
 from utils.linalg import spdiag
 from utils.gsp import check_valid_adjacency, check_valid_laplacian
 
+
 class BaseGraph:
     """
     Base class defining some behaviour graph classes should implement
@@ -38,7 +39,7 @@ class BaseGraph:
         """
         Perform eigendecomposition on the graph Laplacian
         """
-        raise NotImplementedError
+        return NotImplemented
 
     def GFT(self, Y: ndarray) -> ndarray:
         """

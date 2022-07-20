@@ -1,6 +1,6 @@
 from graph.graphs import Graph, ProductGraph, BaseGraph
 from graph.filters import FilterFunction, MultivariateFilterFunction, UnivariateFilterFunction
-from utils.gsp import check_valid_graph, check_compatible
+from utils.checks import check_valid_graph, check_compatible
 from typing import Union
 from numpy import ndarray
 import numpy as np

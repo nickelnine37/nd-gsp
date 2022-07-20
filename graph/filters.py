@@ -16,29 +16,29 @@ class FilterFunction:
 
     @classmethod
     def random_walk(cls, beta: Union[float, ndarray]):
-        raise NotImplementedError
+        return NotImplemented
 
     @classmethod
     def diffusion(cls, beta: Union[float, ndarray]):
-        raise NotImplementedError
+        return NotImplemented
 
     @classmethod
     def ReLu(cls, beta: Union[float, ndarray]):
-        raise NotImplementedError
+        return NotImplemented
 
     @classmethod
     def sigmoid(cls, beta: Union[float, ndarray]):
-        raise NotImplementedError
+        return NotImplemented
 
     @classmethod
     def bandlimited(cls, beta: Union[float, ndarray]):
-        raise NotImplementedError
+        return NotImplemented
 
     def set_beta(self, beta: Union[float, ndarray]):
-        raise NotImplementedError
+        return NotImplemented
 
     def __call__(self, Lams: ndarray):
-        raise NotImplementedError
+        return NotImplemented
 
 
 class UnivariateFilterFunction(FilterFunction):

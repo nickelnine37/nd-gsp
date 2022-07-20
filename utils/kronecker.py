@@ -5,6 +5,8 @@ from numpy.linalg import inv
 
 from utils.linalg import vec, multiply_tensor_product, multiply_tensor_sum, ten, kronecker_product_literal, kronecker_sum_literal
 from scipy.sparse import spmatrix
+from numbers import Number
+
 
 """
 The classes in this file represenent different types of Kronecker-based operators. Their main purpose is to 
@@ -25,46 +27,103 @@ matrices.
 
 class KroneckerOperator:
     """
-    Abstract base class defining the behaviour of Kronecker-type objects
+    Base class defining the behaviour of Kronecker-type operators
     """
 
     __array_priority__ = 10     # increase priority of class, so it takes precedence when mixing matrix multiplications with ndarrays
+    shape: tuple = None         # full (N, N) operator shape
+    shapes: tuple = None        # (N1, N2, ...) individual shapes
+    ndim: int = None            # number of dimensions
+    factor: Number = 1          # a scalar factor multiplying the whole operator 
+
+    def __add__(self, other: 'KroneckerOperator') -> 'KroneckerOperator':
+
+        if not isinstance(other, KroneckerOperator):
+            raise TypeError('Konecker operators can only be added to other Kronecker operators')
+
+        return SumChain(self, other)
+
+    def __radd__(self, other: 'KroneckerOperator') -> 'KroneckerOperator':
+        return self.__add__(other)
+
+    def __sub__(self, other: 'KroneckerOperator') -> 'KroneckerOperator':
+        return self.__add__((-1) * other)
+    
+    def __mul__(self, other):
+        if isinstance(other, Number):
+            self.factor *= other
+        elif isinstance(other, KroneckerOperator):
+            raise TypeError('Only KroneckerProducts can be multipled together element-wise')
+        else:
+            raise TypeError('Kronecker operators can only be scaled by a number')
+        return self
+
+    def __rmul__(self, other):
+        return self.__mul__(other)
+
+    def __truediv__(self, other):
+        return self.__mul__(1 / other)
+
+    def __pow__(self, power, modulo=None):
+        raise NotImplementedError
 
     def __matmul__(self, other: Union['KroneckerOperator', ndarray]) -> Union['KroneckerOperator', ndarray]:
-        """
-        All inheriting classes should implement this method
-        """
-        raise NotImplementedError
+
+        if isinstance(other, ndarray):
+            return self.operate(other)
+
+        elif isinstance(other, KroneckerOperator):
+            return ProductChain(self, other)
+
+        else:
+            raise TypeError('Both objects in the matrix product must be Kronecker Operators')
 
     def __rmatmul__(self, other: Union['KroneckerOperator', ndarray]) -> Union['KroneckerOperator', ndarray]:
         return (self.T @ other.T).T
 
-    def quadratic_form(self, X: ndarray):
+    def __pos__(self):
+        return self
+
+    def __neg__(self):
+        return (-1) * self
+
+    def operate(self, other: ndarray) -> ndarray:
+        raise NotImplementedError
+
+    def quadratic_form(self, X: ndarray) -> float:
         """
         Compute the quadratic form vec(X).T @ self @ vec(X)
         """
-        assert isinstance(X, ndarray)
+
+        if not isinstance(X, ndarray):
+            raise TypeError
+
         return (X * (self @ X)).sum()
 
     def inv(self):
         """
         Inverse method. Use with caution.
         """
-        raise NotImplementedError
+        return NotImplemented
 
     @property
     def T(self):
         """
         Transpose property
         """
-        raise NotImplementedError
+        return NotImplemented
 
 
-def check_valid_operators(*As):
+def check_valid_matrices(*As):
     assert all(isinstance(A, (ndarray, spmatrix)) for A in As)
     assert all(A.ndim == 2 for A in As)
     assert all(A.shape[0] == A.shape[1] for A in As)
 
+
+def check_operators_consistent(*operators):
+    assert all(isinstance(A, KroneckerOperator) for A in operators), f'All operators in this chain must be consistent, but they have types {[type(operator) for operator in operators]} respectively'
+    assert all(op1.shape == op2.shape for op1, op2 in zip(operators[1:], operators[:-1])), f'All operators in this chain should have the same shape, but they have shapes {[operator.shape for operator in operators]} respectively'
+    
 
 class KroneckerProduct(KroneckerOperator):
     """
@@ -72,37 +131,46 @@ class KroneckerProduct(KroneckerOperator):
     """
 
     def __init__(self, *As):
-        check_valid_operators(*As)
+        check_valid_matrices(*As)
         self.As = As
         self.ndim = len(As)
-        self.shapes = [A.shape[0] for A in As]
+        self.shapes = tuple(A.shape[0] for A in As)
+        N = int(np.prod(self.shapes))
+        self.shape = (N, N)
 
     def __matmul__(self, other: Union[KroneckerOperator, ndarray]) -> Union[KroneckerOperator, ndarray]:
-
+        
+        # in this case, if other is another Kronecker product, we can get a simpler representation
         if isinstance(other, KroneckerProduct):
-            assert len(self.As) == len(other.As)
-            assert all([A1.shape == A2.shape for A1, A2 in zip(self.As, other.As)])
-            return KroneckerProduct(*[A1 @ A2 for A1, A2 in zip(self.As, other.As)])
-
-        if isinstance(other, ndarray):
-            if other.ndim == 1:
-                return vec(multiply_tensor_product(ten(other, shape=tuple(reversed(self.shapes))), *self.As))
-            else:
-                assert other.ndim == self.ndim
-                return multiply_tensor_product(other, *self.As)
-
-        if isinstance(other, KroneckerOperator):
-            return KroneckerCoposite(self, other)
+            check_operators_consistent(self, other)
+            return self.factor * other.factor * KroneckerProduct(*[A1 @ A2 for A1, A2 in zip(self.As, other.As)])
 
         else:
-            raise ValueError('other should be a ndarray or a Kronecker type')
+            return super().__matmul__(other)
+
+    def __mul__(self, other):
+
+        # kronecker products can be hadamarded against other kronecker products only
+        if isinstance(other, KroneckerProduct):
+            check_operators_consistent(self, other)
+            return self.factor * other.factor * KroneckerProduct(*[A1 * A2 for A1, A2 in zip(self.As, other.As)])
+        else:
+            return super().__mul__(other)
+
+
+    def operate(self, other: ndarray) -> ndarray:
+
+        if other.ndim == 1:
+            return self.factor * vec(multiply_tensor_product(ten(other, shape=tuple(reversed(self.shapes))), *self.As))
+        else:
+            return self.factor * multiply_tensor_product(other, *self.As)
 
     def inv(self):
-        return KroneckerProduct(*[inv(A) for A in self.As])
+        return self.factor * KroneckerProduct(*[inv(A) for A in self.As])
 
     @property
     def T(self):
-        return KroneckerProduct(*[A.T for A in self.As])
+        return self.factor * KroneckerProduct(*[A.T for A in self.As])
 
     def __repr__(self):
         return 'KroneckerProduct({})'.format(' ⊗ '.join([str(len(A)) for A in self.As]))
@@ -117,29 +185,23 @@ class KroneckerSum(KroneckerOperator):
     """
 
     def __init__(self, *As):
-        check_valid_operators(*As)
+        check_valid_matrices(*As)
         self.As = As
         self.ndim = len(As)
-        self.shapes = [A.shape[0] for A in As]
+        self.shapes = tuple(A.shape[0] for A in As)
+        N = int(np.prod(self.shapes))
+        self.shape = (N, N)
 
-    def __matmul__(self, other: Union[KroneckerOperator, ndarray]) -> Union[KroneckerOperator, ndarray]:
-
-        if isinstance(other, ndarray):
-            if other.ndim == 1:
-                return vec(multiply_tensor_sum(ten(other, shape=tuple(reversed(self.shapes))), *self.As))
-            else:
-                assert other.ndim == self.ndim
-                return multiply_tensor_sum(other, *self.As)
-
-        if isinstance(other, KroneckerOperator):
-            return KroneckerCoposite(self, other)
-
+    def operate(self, other: ndarray) -> ndarray:
+        
+        if other.ndim == 1:
+            return self.factor * vec(multiply_tensor_sum(ten(other, shape=tuple(reversed(self.shapes))), *self.As))
         else:
-            raise ValueError('other should be a ndarray or a Kronecker type')
-
+            return self.factor * multiply_tensor_sum(other, *self.As)
+        
     @property
     def T(self):
-        return KroneckerSum(*[A.T for A in self.As])
+        return self.factor * KroneckerSum(*[A.T for A in self.As])
 
     def __repr__(self):
         return 'KroneckerSum({})'.format(' ⊕ '.join([str(len(A)) for A in self.As]))
@@ -155,7 +217,7 @@ class KroneckerDiag(KroneckerOperator):
 
     def __init__(self, A: ndarray):
         """
-        Initialise with a tensor of shape (NN, ..., N1)
+        Initialise with a tensor of shape (Nn, ..., N1)
         """
 
         assert isinstance(A, ndarray)
@@ -163,24 +225,19 @@ class KroneckerDiag(KroneckerOperator):
 
         self.A = A
         self.ndim = A.ndim
+        self.shapes = tuple(reversed(A.shape))
+        N = int(np.prod(self.shapes))
+        self.shape = (N, N)
 
-    def __matmul__(self, other: Union[KroneckerOperator, ndarray]) -> Union[KroneckerOperator, ndarray]:
-
-        if isinstance(other, ndarray):
-            if other.ndim == 1:
-                return vec(self.A) * other
-            else:
-                assert other.ndim == self.ndim
-                return self.A * other
-
-        elif isinstance(other, KroneckerOperator):
-            return KroneckerCoposite(self, other)
-
+    def operate(self, other: ndarray) -> ndarray:
+        
+        if other.ndim == 1:
+            return self.factor * vec(self.A) * other
         else:
-            raise ValueError('other should be a ndarray or a Kronecker type')
+            return self.factor * self.A * other
 
     def inv(self):
-        return KroneckerDiag(1 / self.A)
+        return self.factor * KroneckerDiag(1 / self.A)
 
     @property
     def T(self):
@@ -193,43 +250,68 @@ class KroneckerDiag(KroneckerOperator):
         return 'KroneckerDiag{}'.format(self.A.shape)
 
 
-class KroneckerCoposite(KroneckerOperator):
+class SumChain(KroneckerOperator):
     """
-    Used to represent a chain of Kronecker objects mattrix multiplied together
+    Used to represent a chain of Kronecker objects summed together
     """
 
-    def __init__(self, *krons):
-        assert all(isinstance(A, KroneckerOperator) for A in krons), 'All matrices passed should be of Kronecker type'
-        self.krons = sum([[A] if not isinstance(A, KroneckerCoposite) else [AA for AA in A.krons] for A in krons], [])
+    def __init__(self, *operators):
+        check_operators_consistent(*operators)
+        self.chain = operators
+        self.shape = self.chain[0].shape
+        self.shapes = self.chain[0].shapes
 
-
-    def __matmul__(self, other: Union[KroneckerOperator, ndarray]) -> Union[KroneckerOperator, ndarray]:
-
-        if isinstance(other, ndarray):
-            out = self.krons[-1] @ other
-            for kron in reversed(self.krons[:-1]):
-                out = kron @ out
-            return out
-
-        elif isinstance(other, KroneckerOperator):
-            return KroneckerCoposite(*self.krons, other)
+    def operate(self, other: ndarray) -> ndarray:
+        return self.factor * sum(operator.operate(other) for operator in self.chain)
 
     def inv(self):
-        return KroneckerCoposite(*[kron.inv() for kron in self.krons[::-1]])
+        raise NotImplementedError
 
     @property
     def T(self):
-        return KroneckerCoposite(*[kron.T for kron in self.krons[::-1]])
+        return self.factor * SumChain(*[operator.T for operator in self.chain])
 
     def __repr__(self):
-        return 'KroneckerCoposite({})'.format(', '.join([str(kron) for kron in self.krons]))
+        return 'SumChain({})'.format(', '.join([str(operator) for operator in self.chain]))
 
     def __str__(self):
-        return 'KroneckerCoposite({})'.format(', '.join([str(kron) for kron in self.krons]))
+        return 'SumChain({})'.format(', '.join([str(operator) for operator in self.chain]))
+
+
+class ProductChain(KroneckerOperator):
+    """
+    Used to represent a chain of Kronecker objects matrix-multiplied together
+    """
+
+    def __init__(self, *operators):
+        check_operators_consistent(*operators)
+        self.chain = operators
+        self.shape = self.chain[0].shape
+        self.shapes = self.chain[0].shapes
+        
+    def operate(self, other: ndarray) -> ndarray:
+
+        out = self.chain[-1] @ other
+        for operator in reversed(self.chain[:-1]):
+            out = operator @ out
+        return self.factor * out
+        
+    def inv(self):
+        return self.factor * ProductChain(*[operator.inv() for operator in reversed(self.chain)])
+
+    @property
+    def T(self):
+        return self.factor * ProductChain(*[operator.T for operator in reversed(self.chain)])
+
+    def __repr__(self):
+        return 'ProductChain({})'.format(', '.join([str(operator) for operator in self.chain]))
+
+    def __str__(self):
+        return 'ProductChain({})'.format(', '.join([str(operator) for operator in self.chain]))
 
 
 
-def _run_tests(seed: int=0):
+def _run_tests(seed: int=1):
 
     np.random.seed(seed)
     N1 = 3; N2 = 4; N3 = 5
@@ -237,48 +319,84 @@ def _run_tests(seed: int=0):
     A2 = np.random.randn(N2, N2)
     A3 = np.random.randn(N3, N3)
     X = np.random.randn(N3, N2, N1)
-    d = np.random.randn(N1 * N2 * N3)
+    D = np.random.randn(N3, N2, N1)
+
+    def run_assertions(literal, optimised):
+
+        assert np.allclose(literal @ vec(X), optimised @ vec(X))                      # test forward matrix multiplication
+        assert np.allclose(vec(X) @ literal, vec(X) @ optimised)                      # test backward matrix multiplication
+        assert np.isclose(vec(X) @ literal @ vec(X), optimised.quadratic_form(X))     # test quadratic form
 
     def test_kronecker_product():
 
-        kp_literal = kronecker_product_literal(A1, A2, A3)
-        kp_optimised = KroneckerProduct(A1, A2, A3)
-
-        assert np.allclose(kp_literal @ vec(X), kp_optimised @ vec(X))                      # test forward matrix multiplication
-        assert np.allclose(vec(X) @ kp_literal, vec(X) @ kp_optimised)                      # test backward matrix multiplication
-        assert np.isclose(vec(X) @ kp_literal @ vec(X), kp_optimised.quadratic_form(X))     # test quadratic form
+        literal = kronecker_product_literal(A1, A2, A3)
+        optimised = KroneckerProduct(A1, A2, A3)
+        run_assertions(literal, optimised)
 
     def test_kronecker_sum():
 
-        ks_literal = kronecker_sum_literal(A1, A2, A3)
-        ks_optimised = KroneckerSum(A1, A2, A3)
-
-        assert np.allclose(ks_literal @ vec(X), ks_optimised @ vec(X))                      # test forward matrix multiplication
-        assert np.allclose(vec(X) @ ks_literal, vec(X) @ ks_optimised)                      # test backward matrix multiplication
-        assert np.isclose(vec(X) @ ks_literal @ vec(X), ks_optimised.quadratic_form(X))     # test quadratic form
+        literal = kronecker_sum_literal(A1, A2, A3)
+        optimised = KroneckerSum(A1, A2, A3)
+        run_assertions(literal, optimised)
 
     def test_kronecker_diag():
 
-        kd_literal = np.diag(d)
-        kd_optimised = KroneckerDiag(ten(d, like=X))
+        literal = np.diag(vec(D))
+        optimised = KroneckerDiag(D)
+        run_assertions(literal, optimised)
 
-        assert np.allclose(kd_literal @ vec(X), kd_optimised @ vec(X))                      # test forward matrix multiplication
-        assert np.allclose(vec(X) @ kd_literal, vec(X) @ kd_optimised)                      # test backward matrix multiplication
-        assert np.isclose(vec(X) @ kd_literal @ vec(X), kd_optimised.quadratic_form(X))     # test quadratic form
+    def test_product_chain():
 
-    def test_kronecker_composite():
+        literal = kronecker_sum_literal(A1, A2, A3) @  np.diag(vec(D)) @ kronecker_product_literal(A1, A2, A3)
+        optimised = ProductChain(KroneckerSum(A1, A2, A3), KroneckerDiag(D), KroneckerProduct(A1, A2, A3))
+        run_assertions(literal, optimised)
 
-        kc_literal = kronecker_sum_literal(A1, A2, A3) @  np.diag(d) @ kronecker_product_literal(A1, A2, A3)
-        kc_optimised = KroneckerCoposite(KroneckerSum(A1, A2, A3), KroneckerDiag(ten(d, like=X)), KroneckerProduct(A1, A2, A3))
+    def test_sum_chain():
 
-        assert np.allclose(kc_literal @ vec(X), kc_optimised @ vec(X))                      # test forward matrix multiplication
-        assert np.allclose(vec(X) @ kc_literal, vec(X) @ kc_optimised)                      # test backward matrix multiplication
-        assert np.isclose(vec(X) @ kc_literal @ vec(X), kc_optimised.quadratic_form(X))     # test quadratic form
+        literal = kronecker_sum_literal(A1, A2, A3) + np.diag(vec(D)) + kronecker_product_literal(A1, A2, A3)
+        optimised = SumChain(KroneckerSum(A1, A2, A3), KroneckerDiag(D), KroneckerProduct(A1, A2, A3))
+        run_assertions(literal, optimised)
+
+    def test_operator_multiplcation():
+
+        literal = kronecker_sum_literal(A1, A2, A3) @ np.diag(vec(D)) @ kronecker_product_literal(A1, A2, A3)
+        optimised = KroneckerSum(A1, A2, A3) @ KroneckerDiag(D) @ KroneckerProduct(A1, A2, A3)
+        run_assertions(literal, optimised)
+
+    def test_operator_addition():
+
+        literal = kronecker_sum_literal(A1, A2, A3) + np.diag(vec(D)) + kronecker_product_literal(A1, A2, A3)
+        optimised = KroneckerSum(A1, A2, A3) + KroneckerDiag(D) + KroneckerProduct(A1, A2, A3)
+        run_assertions(literal, optimised)
+
+    def test_operator_subtraction():
+
+        literal = np.diag(vec(D)) - kronecker_product_literal(A1, A2, A3)
+        optimised = KroneckerDiag(D) - KroneckerProduct(A1, A2, A3)
+        run_assertions(literal, optimised)
+
+    def test_operator_scaling():
+
+        literal = 2 * kronecker_sum_literal(A1, A2, A3) + np.diag(vec(D)) / 5 - (13 / 11) * kronecker_product_literal(A1, A2, A3)
+        optimised = 2 * KroneckerSum(A1, A2, A3) + KroneckerDiag(D) / 5 - (13 / 11) * KroneckerProduct(A1, A2, A3)
+        run_assertions(literal, optimised)
+
+    def test_kronecker_hadamard():
+
+        literal = 2 * kronecker_product_literal(A1, A2, A3) * 4 * kronecker_product_literal(A1, A2, A3).T
+        optimised = 2 * KroneckerProduct(A1, A2, A3) * 4 * KroneckerProduct(A1, A2, A3).T
+        run_assertions(literal, optimised)
 
     test_kronecker_product()
     test_kronecker_sum()
     test_kronecker_diag()
-    test_kronecker_composite()
+    test_product_chain()
+    test_sum_chain()
+    test_operator_multiplcation()
+    test_operator_addition()
+    test_operator_subtraction()
+    test_operator_scaling()
+    test_kronecker_hadamard()
 
     print('All tests passed')
 
