@@ -3,7 +3,7 @@ from numpy import ndarray
 from typing import Union
 from numpy.linalg import inv
 
-from utils.linalg import vec, multiply_tensor_product, multiply_tensor_sum, ten, kronecker_product_literal, kronecker_sum_literal
+from utils.linalg import vec, multiply_tensor_product, multiply_tensor_sum, ten, kronecker_product_literal, kronecker_sum_literal, kronecker_diag_literal
 from scipy.sparse import spmatrix
 from numbers import Number
 
@@ -159,24 +159,33 @@ class KroneckerOperator:
         """
         return (-1) * self
 
-    # def __array_ufunc__(self, method, *inputs, **kwargs):
-    #     """
-    #     Overrise the numpy implementations of matmul and dot, so that we can also use
-    #     these funcions rather than just the @ operator.
-    #     """
-    #
-    #     if method is np.matmul or method is np.dot:
-    #
-    #         A, B = inputs[1], inputs[2]
-    #
-    #         if A is self:
-    #             return self @ B
-    #
-    #         if B is self:
-    #             return A @ self
-    #
-    #     else:
-    #         raise NotImplementedError
+    def __array_ufunc__(self, method, *inputs, **kwargs):
+        """
+        Override the numpy implementation of matmul, so that we can also use
+        this funcion rather than just the @ operator.
+
+        E.g.
+            KroneckerProduct(A, B, C) @ vec(X) == np.matmul(KroneckerProduct(A, B, C), vec(X))
+
+        Note that
+            KroneckerProduct(A, B, C) @ X !=  np.matmul(KroneckerProduct(A, B, C), X)
+
+        and that it does not work with np.dot()
+        """
+
+
+        if method is np.matmul:
+
+            A, B = inputs[1], inputs[2]
+
+            if A is self:
+                return self.__matmul__(B)
+
+            if B is self:
+                return self.__rmatmul__(A)
+
+        else:
+            raise NotImplementedError
 
     def operate(self, other: ndarray) -> ndarray:
         """
@@ -486,18 +495,27 @@ def _run_tests(seed: int=1):
     X = np.random.randn(N4, N3, N2, N1)
     D = np.random.randn(N4, N3, N2, N1)
 
+    # create actual array structures
     kp_literal = kronecker_product_literal(A1, A2, A3, A4)
     ks_literal = kronecker_sum_literal(A1, A2, A3, A4)
+    kd_literal = kronecker_diag_literal(D)
+
+    # create lazy computation equivelants
     kp_optimised = KroneckerProduct(A1, A2, A3, A4)
     ks_optimised = KroneckerSum(A1, A2, A3, A4)
-    kd_literal = np.diag(vec(D))
     kd_optimised = KroneckerDiag(D)
 
     def run_assertions(literal, optimised):
 
+        # test with @ operator
         assert np.allclose(literal @ vec(X), optimised @ vec(X))                      # test forward matrix multiplication
         assert np.allclose(vec(X) @ literal, vec(X) @ optimised)                      # test backward matrix multiplication
-        assert np.isclose(vec(X) @ literal @ vec(X), optimised.quadratic_form(X))     # test quadratic form
+        assert np.isclose(vec(X) @ literal @ vec(X), vec(X) @ optimised @ vec(X))     # test quadratic form
+
+        # test with np.matmul
+        assert np.allclose(np.matmul(literal, vec(X)), np.matmul(optimised, vec(X)))
+        assert np.allclose(np.matmul(vec(X), literal), np.matmul(vec(X), optimised))
+        assert np.isclose(np.matmul(vec(X), np.matmul(literal, vec(X))), np.matmul(vec(X), np.matmul(optimised, vec(X))))
 
     def test_kronecker_product():
         run_assertions(kp_literal, kp_optimised)

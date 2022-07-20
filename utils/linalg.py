@@ -77,6 +77,10 @@ def kronecker_sum_literal(*As) -> ndarray:
     return tot
 
 
+def kronecker_diag_literal(X: ndarray) -> ndarray:
+    return diag(vec(X))
+
+
 def vec(X: ndarray) -> ndarray:
     """
     Convert a tensor X of any shape into a vector
