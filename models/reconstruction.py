@@ -26,7 +26,7 @@ class GraphSignalReconstructor:
         # check the signal, graph and filter_function are all mutually compatible
         check_compatible(self.signal, self.graph, self.filter_function)
 
-        self.graph.decompose()
+        self.graph._decompose()
 
     def get_f(self):
         H2 = self.graph.U @ diag(self.filter_function(self.graph.lam) ** 2) @ self.graph.U.T

@@ -19,23 +19,25 @@ class BaseGraph:
 
     # inheriting classes need to fill these variables
 
-    N = None                # number of nodes in the graph
-    ndim = None             # 1 for SimpleGraph, n for product graph
-    signal_shape = None     # the shape that signals defined on this graph should be
+    N: int = None                                    # number of nodes in the graph
+    ndim: int = None                                 # 1 for SimpleGraph, n for product graph
+    signal_shape: tuple = None                       # the shape that signals defined on this graph should be
 
-    A = None                # dense adjacency matrix
-    A_ = None               # sparse adjacancy matrix
-    L = None                # dense Laplacian
-    L_ = None               # sparse Laplacian
-    graph = None            # networx graph
+    A: Union[ndarray, KroneckerSum] = None           # dense adjacency matrix
+    A_: Union[spmatrix, KroneckerSum] = None         # sparse adjacancy matrix
+    L: Union[ndarray, KroneckerSum] = None           # dense Laplacian
+    L_: Union[spmatrix, KroneckerSum] = None         # sparse Laplacian
+    graph: nx.Graph = None                           # networx graph
 
-    decomposed = False      # whether eigendecomposition has been performed
-    U = None                # eigenvector matrix
-    lam = None              # eigenvalue vector
+    decomposed: bool = False                         # whether eigendecomposition has been performed
+    U: Union[ndarray, KroneckerProduct] = None       # eigenvector matrix
+    lam: ndarray = None                              # eigenvalue vector
 
-    def decompose(self):
+    def _decompose(self):
         """
-        Perform eigendecomposition on the graph Laplacian
+        Perform eigendecomposition on the graph Laplacian. This never needs to be called by the end user.
+        Instead, it is called automatically when the user attempts to access one of the attributes `U`,
+        `lam` or `lams`. See __getattribute__ for details.
         """
         return NotImplemented
 
@@ -65,7 +67,7 @@ class BaseGraph:
         """
 
         if item in ['U', 'lam', 'lams']:
-            self.decompose()
+            self._decompose()
 
         return super().__getattribute__(item)
 
@@ -233,13 +235,9 @@ class Graph(BaseGraph):
 
         self.N = len(self.A)
         self.signal_shape = (self.N, )
-
-        self.decomposed = False
-        self.lam = None
-        self.U = None
         self.ndim = 1
 
-    def decompose(self):
+    def _decompose(self):
         """
         Perform eigendecomposition of the Laplacian and update internal state accordingly.
         """
@@ -269,10 +267,9 @@ class ProductGraph(BaseGraph):
         assert all(isinstance(graph, Graph) for graph in graphs), 'All arguments should be Graph objects'
 
         self.graphs = graphs
-        self.decomposed = all(graph.decomposed for graph in self.graphs)
         self.ndim = len(graphs)
         self.N = int(np.prod([graph.N for graph in graphs]))
-        self.signal_shape = (graph.N for graph in reversed(graphs))
+        self.signal_shape = tuple(graph.N for graph in reversed(graphs))
         self.lams = None
 
         self.A = KroneckerSum(*[graph.A for graph in graphs])
@@ -288,22 +285,28 @@ class ProductGraph(BaseGraph):
         graphs = [Graph.chain(N) for N in Ns]
         return cls(*graphs)
 
-    def decompose(self):
+    def _decompose(self):
         """
         Perform eigendecomposition of the Laplacian and update internal state accordingly.
         """
-        for graph in self.graphs:
-            graph.decompose()
 
-        self.U = KroneckerProduct(*[graph.U for graph in self.graphs])
+        if not self.decomposed:
 
-        # DO NOT ASSIGN lams DIRECTLY TO INSTANCe
-        lams = np.array(np.meshgrid(*[g.lam for g in reversed(self.graphs)], indexing='ij'))
+            for graph in self.graphs:
+                graph._decompose()
 
-        # BECAUSE OTHERWISE THIS WOULD CASUE __getattribute__ INFINITE RECURSION
-        self.lam = lams.sum(0)
-        self.lams = lams
-        self.decomposed = True
+            self.U = KroneckerProduct(*[graph.U for graph in self.graphs])
+
+            # DO NOT ASSIGN lams DIRECTLY TO INSTANCE
+            lams = np.array(np.meshgrid(*[g.lam for g in reversed(self.graphs)], indexing='ij'))
+
+            # BECAUSE OTHERWISE THIS WOULD CASUE __getattribute__ INFINITE RECURSION
+            self.lam = lams.sum(0)
+
+            # ASSIGN IT HERE
+            self.lams = lams
+
+            self.decomposed = True
 
     def __repr__(self):
         return f'Graph(N={" x ".join([str(graph.N) for graph in self.graphs])})'
@@ -327,7 +330,7 @@ def _run_tests():
         N1 = 100; N2 = 150
         graph = ProductGraph.lattice(N1, N2)
         signal = np.random.randn(N2, N1)
-        
+
         assert np.allclose(signal, graph.rGFT(graph.GFT(signal)))
 
     test_graph()

@@ -63,7 +63,7 @@ class GraphSignalSmoother:
         check_compatible(self.signal, self.graph, self.filter_function)
 
         # eigen-decompose the graph
-        self.graph.decompose()
+        self.graph._decompose()
 
         # apply the filter function to the graph frequency
         if isinstance(filter_function, MultivariateFilterFunction):
