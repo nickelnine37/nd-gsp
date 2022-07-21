@@ -209,20 +209,20 @@ class KroneckerOperator:
         Sum the operator along one axis as if it is a matrix. Or None for total sum.
         """
 
-        if axis > 1 or axis < -1:
+        if axis is not None and (axis > 1 or axis < -1):
             raise ValueError('Axis should be -1, 0, 1 or None')
 
         else:
             ones = np.ones(tuple(reversed(self.shapes)))
 
             if axis is None:
-                return ones @ self @ ones
+                return self.quadratic_form(ones)
 
             elif axis == 1 or axis == -1:
-                return self @ ones
+                return vec(self @ ones)
 
             elif axis == 0:
-                return ones @ self
+                return vec(self.T @ ones)
 
             else:
                 raise ValueError('Axis should be -1, 0, 1 or None')
@@ -231,14 +231,21 @@ class KroneckerOperator:
         """
         Inverse method. Use with caution.
         """
-        return NotImplemented
+        raise NotImplementedError
 
     @property
     def T(self):
         """
         Return a copy of the object transposed.
         """
-        return NotImplemented
+        raise NotImplementedError
+
+    def to_array(self) -> ndarray:
+        """
+        Turn into a literal array. Use with caution!
+        """
+
+        raise NotImplementedError
 
 
 class KroneckerProduct(KroneckerOperator):
@@ -301,11 +308,16 @@ class KroneckerProduct(KroneckerOperator):
     def T(self):
         return self.factor * KroneckerProduct(*[A.T for A in self.As])
 
+    def to_array(self) -> ndarray:
+        return self.factor * kronecker_product_literal(*self.As)
+
     def __repr__(self):
         return 'KroneckerProduct({})'.format(' ⊗ '.join([str(len(A)) for A in self.As]))
 
     def __str__(self):
         return 'KroneckerProduct({})'.format(' ⊗ '.join([str(len(A)) for A in self.As]))
+
+
 
 
 class KroneckerSum(KroneckerOperator):
@@ -344,6 +356,9 @@ class KroneckerSum(KroneckerOperator):
     @property
     def T(self):
         return self.factor * KroneckerSum(*[A.T for A in self.As])
+
+    def to_array(self) -> ndarray:
+        return self.factor * kronecker_sum_literal(*self.As)
 
     def __repr__(self):
         return 'KroneckerSum({})'.format(' ⊗ '.join([str(len(A)) for A in self.As]))
@@ -408,6 +423,9 @@ class KroneckerDiag(KroneckerOperator):
     def T(self):
         return self
 
+    def to_array(self) -> ndarray:
+        return self.factor * np.diag(vec(self.A))
+
     def __repr__(self):
         return 'KroneckerDiag({})'.format(' ⊗ '.join([str(i) for i in reversed(self.A.shape)]))
 
@@ -448,6 +466,9 @@ class _SumChain(KroneckerOperator):
     @property
     def T(self):
         return self.factor * _SumChain(*[operator.T for operator in self.chain])
+
+    def to_array(self) -> ndarray:
+        return self.factor * sum(operator.to_array() for operator in self.chain)
 
     def __repr__(self):
         return 'SumChain({})'.format(', '.join([str(operator) for operator in self.chain]))
@@ -492,6 +513,12 @@ class _ProductChain(KroneckerOperator):
     def T(self):
         return self.factor * _ProductChain(*[operator.T for operator in reversed(self.chain)])
 
+    def to_array(self) -> ndarray:
+        out = self.chain[-1].to_array()
+        for A in reversed(self.chain[:-1]):
+            out = A.to_array() @ out
+        return self.factor * out
+
     def __repr__(self):
         return 'ProductChain({})'.format(', '.join([str(operator) for operator in self.chain]))
 
@@ -501,6 +528,8 @@ class _ProductChain(KroneckerOperator):
 
 
 def _run_tests(seed: int=1):
+
+    np.set_printoptions(precision=3, linewidth=500, threshold=500, suppress=True, edgeitems=5)
 
     np.random.seed(seed)
 
@@ -538,6 +567,15 @@ def _run_tests(seed: int=1):
         assert np.allclose(np.matmul(literal, vec(X)), np.matmul(optimised, vec(X)))
         assert np.allclose(np.matmul(vec(X), literal), np.matmul(vec(X), optimised))
         assert np.isclose(np.matmul(vec(X), np.matmul(literal, vec(X))), np.matmul(vec(X), np.matmul(optimised, vec(X))))
+
+        # test summing operation
+        assert np.allclose(literal.sum(0), optimised.sum(0))
+        assert np.allclose(literal.sum(1), optimised.sum(1))
+        assert np.isclose(literal.sum(), optimised.sum())
+
+        # test literal conversion
+        assert np.allclose(literal, optimised.to_array())
+
 
     def test_kronecker_product():
         run_assertions(kp_literal, kp_optimised)

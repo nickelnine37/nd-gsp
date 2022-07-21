@@ -57,9 +57,6 @@ class GraphSignalSmoother:
         # check the signal, graph and filter_function are all mutually compatible
         check_compatible(graph=self.graph, filter_function=self.filter_function)
 
-        # eigen-decompose the graph
-        self.graph._decompose()
-
         # apply the filter function to the graph frequency
         if isinstance(filter_function, MultivariateFilterFunction):
             self.G2 = filter_function(graph.lams) ** 2
@@ -93,8 +90,11 @@ class GraphSignalSmoother:
 
     def compute_mean(self, signal: ndarray) -> ndarray:
         """
-        Compute the smoothed signal
+        Compute the smoothed signal. `signal` should be the appropriate shape for the graph, and
+        contain no nan values.
         """
+
+        check_compatible(signal=signal, graph=self.graph, filter_function=self.filter_function)
         return self.graph.scale_spectral(signal, self.J)
 
     def compute_var(self) -> ndarray:
@@ -108,11 +108,8 @@ class GraphSignalSmoother:
         Calling the class on a signal will compute both the posterior mean and the posterior variance
         """
 
-        check_compatible(signal=signal, graph=self.graph, filter_function=self.filter_function)
-
-        # check the signal contains no nans
-        assert not np.isnan((signal ** 2).sum()), 'The signal contains nan values - this is not valid for graph signal smoothing'
-
         return self.compute_mean(signal), self.compute_var()
+
+
 
 
