@@ -29,11 +29,9 @@ class BaseGraph:
     L_ = None               # sparse Laplacian
     graph = None            # networx graph
 
-    decomposed = None       # whether eigendecomposition has been performed
+    decomposed = False      # whether eigendecomposition has been performed
     U = None                # eigenvector matrix
     lam = None              # eigenvalue vector
-
-
 
     def decompose(self):
         """
@@ -45,14 +43,12 @@ class BaseGraph:
         """
         Perform Graph Fourier Transform on a graph signal Y
         """
-        self.decompose()
         return self.U.T @ Y
 
     def rGFT(self, Z: ndarray) -> ndarray:
         """
         Perform reverse Graph Fourier Transform on a fourier coefficients Z
         """
-        self.decompose()
         return self.U @ Z
 
     def scale_spectral(self, Y: ndarray, G: ndarray):
@@ -60,6 +56,18 @@ class BaseGraph:
         Scale the graph fourier coefficients of a signal Y by the function G.
         """
         return self.rGFT(G * self.GFT(Y))
+
+    def __getattribute__(self, item):
+        """
+        This is a small magic hack. It means that whenever we attempt to access one of the
+        attributes `U`, `lam` or `lams`, we intercept and call self.decompose() first. This
+        means we never have to call decompose() manually, and only call it lazily when needed.
+        """
+
+        if item in ['U', 'lam', 'lams']:
+            self.decompose()
+
+        return super().__getattribute__(item)
 
 
 class Graph(BaseGraph):
@@ -105,7 +113,6 @@ class Graph(BaseGraph):
         A[0, -1] = 1
         A = A + A.T
         return cls(A=A)
-
 
     @classmethod
     def random_tree(cls, N: int, seed: int=0):
@@ -232,7 +239,6 @@ class Graph(BaseGraph):
         self.U = None
         self.ndim = 1
 
-
     def decompose(self):
         """
         Perform eigendecomposition of the Laplacian and update internal state accordingly.
@@ -276,6 +282,9 @@ class ProductGraph(BaseGraph):
 
     @classmethod
     def lattice(cls, *Ns):
+        """
+        Create a lattice graph with Ni ticks in each dimension.
+        """
         graphs = [Graph.chain(N) for N in Ns]
         return cls(*graphs)
 
@@ -287,8 +296,13 @@ class ProductGraph(BaseGraph):
             graph.decompose()
 
         self.U = KroneckerProduct(*[graph.U for graph in self.graphs])
-        self.lams = np.array(np.meshgrid(*[g.lam for g in reversed(self.graphs)], indexing='ij'))
-        self.lam = self.lams.sum(0)
+
+        # DO NOT ASSIGN lams DIRECTLY TO INSTANCe
+        lams = np.array(np.meshgrid(*[g.lam for g in reversed(self.graphs)], indexing='ij'))
+
+        # BECAUSE OTHERWISE THIS WOULD CASUE __getattribute__ INFINITE RECURSION
+        self.lam = lams.sum(0)
+        self.lams = lams
         self.decomposed = True
 
     def __repr__(self):
@@ -305,6 +319,7 @@ def _run_tests():
         N = 100
         graph = Graph.random_tree(N)
         signal = np.random.randn(N)
+
         assert np.allclose(signal, graph.rGFT(graph.GFT(signal)))
 
     def test_product_graph():
@@ -312,6 +327,7 @@ def _run_tests():
         N1 = 100; N2 = 150
         graph = ProductGraph.lattice(N1, N2)
         signal = np.random.randn(N2, N1)
+        
         assert np.allclose(signal, graph.rGFT(graph.GFT(signal)))
 
     test_graph()

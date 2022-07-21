@@ -204,6 +204,29 @@ class KroneckerOperator:
 
         return (X * (self @ X)).sum()
 
+    def sum(self, axis=None):
+        """
+        Sum the operator along one axis as if it is a matrix. Or None for total sum.
+        """
+
+        if axis > 1 or axis < -1:
+            raise ValueError('Axis should be -1, 0, 1 or None')
+
+        else:
+            ones = np.ones(tuple(reversed(self.shapes)))
+
+            if axis is None:
+                return ones @ self @ ones
+
+            elif axis == 1 or axis == -1:
+                return self @ ones
+
+            elif axis == 0:
+                return ones @ self
+
+            else:
+                raise ValueError('Axis should be -1, 0, 1 or None')
+
     def inv(self):
         """
         Inverse method. Use with caution.
@@ -402,7 +425,6 @@ class _SumChain(KroneckerOperator):
         self.chain = operators
         self.shape = self.chain[0].shape
         self.shapes = self.chain[0].shapes
-
 
     def __copy__(self):
         new = _SumChain(*[operator.__copy__() for operator in self.chain])
