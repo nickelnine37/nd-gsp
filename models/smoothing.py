@@ -1,5 +1,5 @@
-from graph.graphs import Graph, ProductGraph, BaseGraph
-from graph.filters import FilterFunction, MultivariateFilterFunction, UnivariateFilterFunction
+from graph.graphs import BaseGraph
+from graph.filters import FilterFunction, MultivariateFilterFunction
 from utils.checks import check_valid_graph, check_compatible
 from typing import Union
 from numpy import ndarray
@@ -10,7 +10,7 @@ import networkx as nx
 def smooth_graph_signal(signal: ndarray,
                         graph: Union[BaseGraph, ndarray, nx.Graph],
                         filter_function: FilterFunction,
-                        gamma: float) -> ndarray:
+                        gamma: float) -> tuple[ndarray, ndarray]:
     """
     Smooth a graph signal according to the Bayesian model. This is a wrapper for the class GraphSignalSmoother,
     to make a simpler API.
@@ -25,16 +25,16 @@ def smooth_graph_signal(signal: ndarray,
     Returns
     -------
     signal_                 The smoothed graph signal
+    signal_var              The variance associated with the prediction
     """
 
-    signal_smoother = GraphSignalSmoother(signal, graph, filter_function, gamma)
-    return signal_smoother.compute()
+    signal_smoother = GraphSignalSmoother(graph, filter_function, gamma)
+    return signal_smoother(signal)
 
 
 class GraphSignalSmoother:
 
     def __init__(self,
-                 signal: ndarray,
                  graph: Union[BaseGraph, ndarray, nx.Graph],
                  filter_function: FilterFunction,
                  gamma: float):
@@ -43,7 +43,6 @@ class GraphSignalSmoother:
 
         Parameters
         ----------
-        signal                   A graph signal with no missing values. This is an ndarray of any shape. If
         graph                    Either a Graph object, a graph adjacency matrix as a square ndarray (or spmatrix)
         filter_function          A FilterFunction object
         gamma                    Regularisation parameter (>0)
@@ -52,15 +51,11 @@ class GraphSignalSmoother:
 
         # validate the graph and turn into a graph.Graph if not already
         self.graph = check_valid_graph(graph)
-
-        # check the signal contains no nans
-        assert not np.isnan((signal ** 2).sum()), 'The signal contains nan values - this is not valid for graph signal smoothing'
-        self.signal = signal
         self.filter_function = filter_function
         self.gamma = gamma
 
         # check the signal, graph and filter_function are all mutually compatible
-        check_compatible(self.signal, self.graph, self.filter_function)
+        check_compatible(graph=self.graph, filter_function=self.filter_function)
 
         # eigen-decompose the graph
         self.graph._decompose()
@@ -96,24 +91,28 @@ class GraphSignalSmoother:
 
         return self
 
-    def set_signal(self, signal: ndarray) -> 'GraphSignalSmoother':
-        """
-        Reset the observed signal
-        """
-        check_compatible(signal, self.graph, self.filter_function)
-        assert not np.isnan((signal ** 2).sum()), 'The signal contains nan values - this is not valid for graph signal smoothing'
-        self.signal = signal
-        return self
-
-    def compute(self) -> ndarray:
+    def compute_mean(self, signal: ndarray) -> ndarray:
         """
         Compute the smoothed signal
         """
-        return self.graph.scale_spectral(self.signal, self.J)
-
+        return self.graph.scale_spectral(signal, self.J)
 
     def compute_var(self) -> ndarray:
         """
         Compute the marginal variance associted with the prediction
         """
+        return (self.graph.U ** 2) @ self.J
+
+    def __call__(self, signal: ndarray):
+        """
+        Calling the class on a signal will compute both the posterior mean and the posterior variance
+        """
+
+        check_compatible(signal=signal, graph=self.graph, filter_function=self.filter_function)
+
+        # check the signal contains no nans
+        assert not np.isnan((signal ** 2).sum()), 'The signal contains nan values - this is not valid for graph signal smoothing'
+
+        return self.compute_mean(signal), self.compute_var()
+
 

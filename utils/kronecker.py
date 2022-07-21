@@ -590,6 +590,12 @@ def _run_tests(seed: int=1):
         optimised = 2 * kp_optimised * 4 * kp_optimised.T
         run_assertions(literal, optimised)
 
+    def test_kronecker_pow():
+
+        literal = kp_literal ** 2 + kd_literal ** 3
+        optimised = kp_optimised ** 2 + kd_optimised ** 3
+        run_assertions(literal, optimised)
+
     def test_assorted_expressions():
 
         literal1 = (2 * kp_literal.T - ks_literal) @ kp_literal / 2.2
@@ -620,6 +626,7 @@ def _run_tests(seed: int=1):
     test_operator_subtraction()
     test_operator_scaling()
     test_kronecker_hadamard()
+    test_kronecker_pow()
     test_assorted_expressions()
 
     print('All tests passed')
