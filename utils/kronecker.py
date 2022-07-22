@@ -242,6 +242,13 @@ class KroneckerOperator:
         """
         raise NotImplementedError
 
+    def conj(self):
+        """
+        Return the complex conjugate of the operator
+        """
+        raise NotImplementedError
+
+
     def to_array(self) -> ndarray:
         """
         Turn into a literal array. Use with caution!
@@ -327,6 +334,9 @@ class KroneckerProduct(KroneckerOperator):
     def T(self):
         return self.factor * KroneckerProduct(*[A.T for A in self.As])
 
+    def conj(self):
+        return self.factor * KroneckerProduct(*[A.conj() for A in self.As])
+
     def to_array(self) -> ndarray:
         return self.factor * kronecker_product_literal(*self.As)
 
@@ -385,6 +395,9 @@ class KroneckerSum(KroneckerOperator):
     @property
     def T(self):
         return self.factor * KroneckerSum(*[A.T for A in self.As])
+
+    def conj(self):
+        return self.factor * KroneckerSum(*[A.conj() for A in self.As])
 
     def to_array(self) -> ndarray:
         return self.factor * kronecker_sum_literal(*self.As)
@@ -463,6 +476,9 @@ class KroneckerDiag(KroneckerOperator):
     @property
     def T(self):
         return self
+
+    def conj(self):
+        return self.factor * KroneckerDiag(self.A.conj())
 
     def to_array(self) -> ndarray:
         return self.factor * np.diag(vec(self.A))
@@ -543,6 +559,9 @@ class KroneckerBlock(KroneckerOperator):
     def T(self):
         return self.factor * KroneckerBlock(blocks=[[self.blocks[j][i].T for i in range(self.n_blocks)] for j in range(self.n_blocks)])
 
+    def conj(self):
+        return self.factor * KroneckerBlock(blocks=[[self.blocks[j][i].conj() for i in range(self.n_blocks)] for j in range(self.n_blocks)])
+
     def to_array(self) -> ndarray:
         return self.factor * np.block([[self.blocks[j][i].to_array() if isinstance(self.blocks[j][i], KroneckerOperator) else self.blocks[j][i] for i in range(self.n_blocks)] for j in range(self.n_blocks)])
 
@@ -599,6 +618,9 @@ class KroneckerBlockDiag(KroneckerOperator):
     def T(self):
         return self.factor * KroneckerBlockDiag(blocks=[block.T for block in self.blocks])
 
+    def conj(self):
+        return self.factor * KroneckerBlockDiag(blocks=[block.conj() for block in self.blocks])
+
     def to_array(self) -> ndarray:
 
         out = np.zeros(self.shape)
@@ -650,6 +672,9 @@ class _SumChain(KroneckerOperator):
     def T(self):
         return self.factor * _SumChain(*[operator.T for operator in self.chain])
 
+    def conj(self):
+        return self.factor * _SumChain(*[operator.conj() for operator in self.chain])
+
     def to_array(self) -> ndarray:
         return self.factor * sum(operator.to_array() for operator in self.chain)
 
@@ -695,6 +720,9 @@ class _ProductChain(KroneckerOperator):
     @property
     def T(self):
         return self.factor * _ProductChain(*[operator.T for operator in reversed(self.chain)])
+
+    def conj(self):
+        return self.factor * _ProductChain(*[operator.conj() for operator in reversed(self.chain)])
 
     def to_array(self) -> ndarray:
         out = self.chain[-1].to_array()
