@@ -53,5 +53,5 @@ def check_compatible(signal: ndarray = None,
         assert signal.ndim == graph.ndim, f'The graph and the signal have a different number of dimenions ({graph.ndim} and {signal.ndim} respectively)'
         assert signal.shape == graph.signal_shape, f'The graph and signal have incompatible shapes: {graph.signal_shape} vs {signal.shape}'
 
-    if filter_function is not None and graph is not None:
-        assert filter_function.ndim == graph.ndim, f'The filter function and the graph have a different number of dimenions ({filter_function.ndim} and {graph.ndim} respectively)'
+    # if filter_function is not None and graph is not None:
+    #     assert filter_function.ndim == graph.ndim, f'The filter function and the graph have a different number of dimenions ({filter_function.ndim} and {graph.ndim} respectively)'

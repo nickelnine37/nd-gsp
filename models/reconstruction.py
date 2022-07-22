@@ -1,3 +1,5 @@
+from algorithms.cgm import solve_SPCGM
+from algorithms.sim import solve_SIM
 from graph.graphs import BaseGraph, Graph, ProductGraph
 from graph.signals import PartiallyObservedGraphSignal, PartiallyObservedProductGraphSignal
 from graph.filters import FilterFunction, UnivariateFilterFunction, MultivariateFilterFunction
@@ -8,15 +10,20 @@ import numpy as np
 from numpy import eye as I, diag, ndarray
 import networkx as nx
 
+from utils.kronecker import KroneckerDiag
+from utils.linalg import vec, ten
+
 
 class SignalProjector:
 
-    def __init__(self, s: ndarray):
+    def __init__(self, signal: ndarray):
         """
         s is a boolean array specifying where measurements were made
         """
 
-        self.s = s
+        _, s = get_y_and_s(signal)
+
+        self.s = s.astype(bool)
         self.N = len(s)
         self.N_ = s.sum()
 
@@ -69,12 +76,12 @@ def get_y_and_s(signal: ndarray):
 
     """
     if isinstance(signal, np.ma.MaskedArray):
-        s = ~signal.mask
-        y = signal.data
+        s = ~signal.mask.copy()
+        y = signal.data.copy()
 
     elif isinstance(signal, ndarray):
         s = ~np.isnan(signal)
-        y = signal
+        y = signal.copy()
 
     else:
         raise TypeError('signal should be an array or a masked array')
@@ -82,26 +89,6 @@ def get_y_and_s(signal: ndarray):
     y[~s] = 0
 
     return y, s
-
-
-def solve_SIM(Y: ndarray, S_: ndarray, J: ndarray, graph: BaseGraph, tol: float=1e-5):
-
-    assert Y.shape == S_.shape and S_.shape == J.shape, f'Y, S_ and J should be the same shape but they are {Y.shape}, {S_.shape} and {J.shape} respectively'
-
-    dF = graph.scale_spectral(Y, J)
-    F = np.zeros_like(dF)
-
-    F += dF
-
-    while any(dF > tol):
-
-        dF = graph.scale_spectral(S_ * dF, J)
-        F += dF
-
-    return F
-
-
-
 
 
 class UnivariateGraphSignalReconstructor:
@@ -114,7 +101,7 @@ class UnivariateGraphSignalReconstructor:
 
 
         self.y, s = get_y_and_s(signal)
-        self.projector = SignalProjector(s)
+        self.projector = SignalProjector(signal)
 
         # validate the graph and turn into a graph.Graph if not already
         self.graph = check_valid_graph(graph)
@@ -126,7 +113,6 @@ class UnivariateGraphSignalReconstructor:
 
         self.g2 = self.filter_function(self.graph.lam) ** 2
         self.H2 = self.graph.U @ diag(self.g2) @ self.graph.U.T
-
         self.M = self.projector.down_project_operator(self.H2) + self.gamma * I(self.projector.N_)
 
     def set_gamma(self, gamma: float) -> 'UnivariateGraphSignalReconstructor':
@@ -134,7 +120,7 @@ class UnivariateGraphSignalReconstructor:
         Set the gamma parameter. Recompute M only.
         """
         self.gamma = gamma
-        self.M = self.projector.down_project_operator(self.H2) + self.gamma * I(self.projector.N_)
+        self.M = self.gamma * self.projector.down_project_operator(self.H2) + I(self.projector.N_)
         return self
 
     def set_beta(self, beta: Union[float, ndarray]) -> 'UnivariateGraphSignalReconstructor':
@@ -143,7 +129,7 @@ class UnivariateGraphSignalReconstructor:
         """
         self.filter_function.set_beta(beta)
         self.g2 = self.filter_function(self.graph.lam) ** 2
-        self.H2 = self.graph.scale_spectral(self.y, self.g2)
+        self.H2 = self.graph.U @ diag(self.g2) @ self.graph.U.T
         self.M = self.projector.down_project_operator(self.H2) + self.gamma * I(self.projector.N_)
 
         return self
@@ -166,10 +152,8 @@ class UnivariateGraphSignalReconstructor:
         """
         return diag(self.compute_covar())
 
-
     def compute_covar(self) -> ndarray:
-        return self.H2 @ self.projector.up_project_operator(np.linalg.inv(self.M))
-
+        return self.H2 @ np.linalg.inv(diag(self.projector.s.astype(float)) @ self.H2 + self.gamma * I(len(self.H2)))
 
     def compute_posterior(self):
         """
@@ -177,30 +161,113 @@ class UnivariateGraphSignalReconstructor:
         """
 
         covar = self.compute_covar()
-        mean = covar @ self.projector.down_project_signal(self.y)
+        mean = covar @ self.y
         return mean, diag(covar)
 
 
 #
-# class MultivariateGraphSignalReconstructor:
-#
-#     def __init__(self,
-#                  signal: ndarray,
-#                  graph: Union[BaseGraph, ndarray, nx.Graph],
-#                  filter_function: FilterFunction,
-#                  gamma: float):
-#
-#         self.Y, self.S = get_y_and_s(signal)
-#
-#
-#         # validate the graph and turn into a graph.Graph if not already
-#         self.graph = check_valid_graph(graph)
-#         self.filter_function = filter_function
-#         self.gamma = gamma
-#
-#         # check the signal, graph and filter_function are all mutually compatible
-#         check_compatible(signal=self.y, graph=self.graph, filter_function=self.filter_function)
-#
+class MultivariateGraphSignalReconstructor:
+
+    def __init__(self,
+                 signal: ndarray,
+                 graph: Union[BaseGraph, ndarray, nx.Graph],
+                 filter_function: FilterFunction,
+                 gamma: float):
+
+        self.Y, self.S = get_y_and_s(signal)
+        self.S = self.S.astype(float)
+
+        # validate the graph and turn into a graph.Graph if not already
+        self.graph = check_valid_graph(graph)
+        self.filter_function = filter_function
+        self.gamma = gamma
+
+        # check the signal, graph and filter_function are all mutually compatible
+        check_compatible(signal=self.Y, graph=self.graph, filter_function=self.filter_function)
+
+    def set_gamma(self, gamma: float) -> 'MultivariateGraphSignalReconstructor':
+        """
+        Set the gamma parameter. Recompute M only.
+        """
+        self.gamma = gamma
+        return self
+
+    def set_beta(self, beta: Union[float, ndarray]) -> 'MultivariateGraphSignalReconstructor':
+        """
+        Set the beta parameter for the filter function. Recompute g2, H2 and M.
+        """
+        self.filter_function.set_beta(beta)
+        return self
+
+    def compute_mean(self, method='sim', tol=1e-5, verbose: bool=True) -> ndarray:
+        """
+        Compute the reconstructed signal. `method` should be one of:
+            * 'sim' for the Stationary Iterative Method
+            * 'cgm' for the Conjugate Gradient Method
+        """
+
+        if isinstance(self.filter_function, MultivariateFilterFunction):
+            G = self.filter_function(self.graph.lams)
+
+        else:
+            G = self.filter_function(self.graph.lam)
+
+        if method.lower() == 'sim':
+
+            J = G ** 2 / (G ** 2 + self.gamma)
+            S_ = (1 - self.S).astype(float)
+
+            result, nits = solve_SIM(self.Y,
+                                     Minv=lambda X: self.graph.scale_spectral(X, J),
+                                     MinvN= lambda X: self.graph.scale_spectral(S_ * X, J),
+                                     tol=tol,
+                                     verbose=verbose)
+
+        elif method.lower() == 'cgm':
+
+            # mimic arrays, but use optimised KroneckerOperators
+            DG = KroneckerDiag(G)
+            DS = KroneckerDiag(self.S)
+            C = DG @ self.graph.U.T @ DS @ self.graph.U @ DG
+            A_precon = C + self.gamma * KroneckerDiag(np.ones_like(self.S))
+
+            print(A_precon)
+
+            Phi = self.graph.U @ DG
+            PhiT = Phi.T
+
+            result, nits = solve_SPCGM(A_precon=lambda x: A_precon @ x,
+                                       y = self.Y,
+                                       Phi=lambda x: Phi @ x,
+                                       PhiT=lambda x: PhiT @ x,
+                                       verbose=verbose)
+
+        else:
+            raise ValueError('`method` should be "sim" or "cgm"')
+
+        if verbose:
+            print(f'{method.upper()} completed in {nits} iterations')
+
+        return result
+
+    # def compute_var(self) -> ndarray:
+    #     """
+    #     Compute the marginal variance associted with the prediction
+    #     """
+    #     return diag(self.compute_covar())
+    #
+    # def compute_covar(self) -> ndarray:
+    #     return self.H2 @ self.projector.up_project_operator(np.linalg.inv(self.M))
+    #
+    # def compute_posterior(self):
+    #     """
+    #     Calling the class on a signal will compute both the posterior mean and the posterior variance
+    #     """
+    #
+    #     covar = self.compute_covar()
+    #     mean = covar @ self.projector.down_project_signal(self.y)
+    #     return mean, diag(covar)
+
 
 
 if __name__ == '__main__':
@@ -215,14 +282,17 @@ if __name__ == '__main__':
             N = 10
             graph = Graph.random_tree(N)
             signal = np.random.randn(N)
-            s = np.random.randint(0, 2, N)
-            gamma = 1
+            signal[np.random.randint(0, 2, N)] = np.nan
+
+            y, s = get_y_and_s(signal)
+
+            gamma = np.random.randn() ** 2
             filter_function = UnivariateFilterFunction.diffusion(beta=1)
 
             # calculate the solution explicitly
             H2 = graph.U @ diag(filter_function(graph.lam) ** 2) @ graph.U.T
-            explicit_sigma = np.linalg.inv(np.linalg.inv(H2) + gamma * I(N))
-            explicit_mean = explicit_sigma @ signal
+            explicit_sigma = np.linalg.inv(gamma * np.linalg.inv(H2) + diag(s))
+            explicit_mean = explicit_sigma @ y
 
             # use our special class
             reconstructor = UnivariateGraphSignalReconstructor(signal, graph, filter_function, gamma)
@@ -231,13 +301,39 @@ if __name__ == '__main__':
             assert np.allclose(explicit_mean, reconstructor_mean)
             assert np.allclose(diag(explicit_sigma), reconstructor_var)
 
+
         def test_multivariate():
 
-            pass
+            # set variables
+            N1 = 5
+            N2 = 6
+            N3 = 7
 
+            graph = ProductGraph.lattice(N1, N2, N3)
+            signal = np.random.randn(N3, N2, N1)
+            S = np.random.randint(0, 2, (N3, N2, N1))
+            signal[S] = np.nan
+            gamma = 0.02
+
+            Y, S = get_y_and_s(signal)
+            filter_function = UnivariateFilterFunction.diffusion(beta=1)
+
+            # calculate the solution explicitly
+            H2 = graph.U.to_array() @ diag(filter_function(vec(graph.lam)) ** 2) @ graph.U.to_array().T
+            explicit_sigma = np.linalg.inv(gamma * np.linalg.inv(H2) + diag(vec(S.astype(float))))
+            explicit_mean = ten(explicit_sigma @ vec(Y), like=Y)
+
+            # calculate the solution
+            reconstructor = MultivariateGraphSignalReconstructor(signal, graph, filter_function, gamma)
+            reconstructor_mean1 = reconstructor.compute_mean(method='sim', tol=1e-8)
+            reconstructor_mean2 = reconstructor.compute_mean(method='cgm', tol=1e-8)
+
+            assert np.allclose(explicit_mean, reconstructor_mean1, atol=1e-5)
+            assert np.allclose(explicit_mean, reconstructor_mean2, atol=1e-5)
 
 
         test_univariate()
+        test_multivariate()
 
         print('All tests passed')
 
