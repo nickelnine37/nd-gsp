@@ -1,7 +1,6 @@
 from numpy import ndarray
 import numpy as np
 from typing import Callable
-import time
 
 
 def solve_SIM(y: ndarray,

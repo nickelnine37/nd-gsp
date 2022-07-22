@@ -1,13 +1,12 @@
 import numpy as np
-from numpy import trace as tr, eye as I, kron, diag
+from numpy import eye as I, diag
 from numpy.linalg import inv, solve
 from numpy.random import randn, randint
 
-from models.reconstruction import SignalProjector, get_y_and_s
-from utils.linalg import vec, ten
+from models.reconstruction.multivariate import SignalProjector, get_y_and_s
 from graph.graphs import Graph
 from graph.filters import UnivariateFilterFunction
-from proof_utils import vector_derivative_numerical, matrix_derivative_numerical
+from proof_utils import vector_derivative_numerical
 
 
 def test1():

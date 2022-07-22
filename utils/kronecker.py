@@ -35,6 +35,8 @@ def check_operators_consistent(*operators):
     assert all(isinstance(A, KroneckerOperator) for A in operators), f'All operators in this chain must be consistent, but they have types {[type(operator) for operator in operators]} respectively'
     assert all(op1.shape == op2.shape for op1, op2 in zip(operators[1:], operators[:-1])), f'All operators in this chain should have the same shape, but they have shapes {[operator.shape for operator in operators]} respectively'
 
+def check_blocks_consistent(blocks):
+    pass
 
 class KroneckerOperator:
     """
@@ -42,7 +44,7 @@ class KroneckerOperator:
     """
 
     __array_priority__ = 10     # increase priority of class, so it takes precedence when mixing matrix multiplications with ndarrays
-    factor: Number = 1.0        # a scalar factor multiplying the whole operator
+    factor: float = 1.0         # a scalar factor multiplying the whole operator
 
     # subclasses need to give values for the following attributes
     shape: tuple = None         # full (N, N) operator shape
@@ -98,7 +100,7 @@ class KroneckerOperator:
 
         if isinstance(other, Number):
             # create a copy of the object rather than mutating the factor directly, which is cleaner and leads to less unexpected behaviour
-            new = self.__copy__()
+            new = self.copy()
             new.factor = self.factor * other
             return new
 
@@ -213,16 +215,16 @@ class KroneckerOperator:
             raise ValueError('Axis should be -1, 0, 1 or None')
 
         else:
-            ones = np.ones(tuple(reversed(self.shapes)))
+            ones = np.ones(self.shape[0])
 
             if axis is None:
                 return self.quadratic_form(ones)
 
             elif axis == 1 or axis == -1:
-                return vec(self @ ones)
+                return self @ ones
 
             elif axis == 0:
-                return vec(self.T @ ones)
+                return self.T @ ones
 
             else:
                 raise ValueError('Axis should be -1, 0, 1 or None')
@@ -246,6 +248,12 @@ class KroneckerOperator:
         """
 
         raise NotImplementedError
+
+    def copy(self):
+        return self.__copy__()
+
+    def deepcopy(self):
+        return self.__deepcopy__()
 
 
 class KroneckerProduct(KroneckerOperator):
@@ -272,7 +280,7 @@ class KroneckerProduct(KroneckerOperator):
         return new
 
     def __pow__(self, power, modulo=None):
-        return self.factor * KroneckerProduct(*[A ** power for A in self.As])
+        return self.factor ** power * KroneckerProduct(*[A ** power for A in self.As])
 
     def __matmul__(self, other: Union[KroneckerOperator, ndarray]) -> Union[KroneckerOperator, ndarray]:
         
@@ -296,10 +304,21 @@ class KroneckerProduct(KroneckerOperator):
 
     def operate(self, other: ndarray) -> ndarray:
 
+        # handle when other is a vector
         if other.ndim == 1:
             return self.factor * vec(multiply_tensor_product(ten(other, shape=tuple(reversed(self.shapes))), *self.As))
+
+        # handle when other is a matrix of column vectors
+        elif other.ndim == 2 and other.shape[0] == self.shape[1]:
+            out = np.zeros_like(other)
+            for i in range(other.shape[1]):
+                out[:, i] = vec(multiply_tensor_product(ten(other[:, i], shape=tuple(reversed(self.shapes))), *self.As))
+            return self.factor * out
+
+        # handle when other is a tensor
         else:
             return self.factor * multiply_tensor_product(other, *self.As)
+
 
     def inv(self):
         return self.factor * KroneckerProduct(*[inv(A) for A in self.As])
@@ -347,12 +366,22 @@ class KroneckerSum(KroneckerOperator):
         raise NotImplementedError
 
     def operate(self, other: ndarray) -> ndarray:
-        
+
+        # handle when other is a vector
         if other.ndim == 1:
             return self.factor * vec(multiply_tensor_sum(ten(other, shape=tuple(reversed(self.shapes))), *self.As))
+
+        # handle when other is a matrix of column vectors
+        elif other.ndim == 2 and other.shape[0] == self.shape[1]:
+            out = np.zeros_like(other)
+            for i in range(other.shape[1]):
+                out[:, i] = vec(multiply_tensor_sum(ten(other[:, i], shape=tuple(reversed(self.shapes))), *self.As))
+            return self.factor * out
+
+        # handle when other is a tensor
         else:
             return self.factor * multiply_tensor_sum(other, *self.As)
-        
+
     @property
     def T(self):
         return self.factor * KroneckerSum(*[A.T for A in self.As])
@@ -397,7 +426,9 @@ class KroneckerDiag(KroneckerOperator):
         return new
 
     def __pow__(self, power, modulo=None):
-        return self.factor * KroneckerDiag(self.A ** power)
+        new = KroneckerDiag(self.A ** power)
+        new.factor = self.factor ** power
+        return new
 
     def __matmul__(self, other: Union[KroneckerOperator, ndarray]) -> Union[KroneckerOperator, ndarray]:
 
@@ -410,9 +441,19 @@ class KroneckerDiag(KroneckerOperator):
             return super().__matmul__(other)
 
     def operate(self, other: ndarray) -> ndarray:
-        
+
+        # handle when other is a vector
         if other.ndim == 1:
             return self.factor * vec(self.A) * other
+
+        # handle when other is a matrix of column vectors
+        elif other.ndim == 2 and other.shape[0] == self.shape[1]:
+            out = np.zeros_like(other)
+            for i in range(other.shape[1]):
+                out[:, i] = vec(self.A) * other[:, i]
+            return self.factor * out
+
+        # handle when other is a tensor
         else:
             return self.factor * self.A * other
 
@@ -431,6 +472,148 @@ class KroneckerDiag(KroneckerOperator):
 
     def __str__(self):
         return 'KroneckerDiag({})'.format(' ⊗ '.join([str(i) for i in reversed(self.A.shape)]))
+
+
+class KroneckerBlock(KroneckerOperator):
+
+    def __init__(self, blocks: list):
+        """
+        Create a general block operator. Items in the block can be arrays or operators.
+
+        E.g. blocks = [[A11, A12, A13]
+                       [A21, A22, A23]
+                       [A31, A32, A33]]
+        """
+
+        check_blocks_consistent(blocks)
+        self.blocks = blocks
+        self.n_blocks = len(self.blocks)
+        self.block_sizes = [self.blocks[i][i].shape[0] for i in range(self.n_blocks)]
+        self.cum_block_sizes = [0] + np.cumsum(self.block_sizes).tolist()
+
+        N = sum(self.block_sizes)
+        self.shape = (N, N)
+
+    def __copy__(self) -> 'KroneckerBlock':
+        new = KroneckerBlock(blocks=[[self.blocks[i][j].copy() if isinstance(self.blocks[i][j] , KroneckerOperator) else self.blocks[i][j] for i in range(self.n_blocks)] for j in range(self.n_blocks)])
+        new.factor = self.factor
+        return new
+
+    def __deepcopy__(self, memodict={}) -> 'KroneckerBlock':
+        new = KroneckerBlock(blocks=[[self.blocks[i][j].deepcopy() if isinstance(self.blocks[i][j] , KroneckerOperator) else self.blocks[i][j].copy() for i in range(self.n_blocks)] for j in range(self.n_blocks)])
+        new.factor = self.factor
+        return new
+
+    def __pow__(self, power, modulo=None):
+        new = KroneckerBlock(blocks=[[self.blocks[i][j] ** power for i in range(self.n_blocks)] for j in range(self.n_blocks)])
+        new.factor = self.factor ** power
+        return new
+
+    def operate(self, other: ndarray) -> ndarray:
+
+        if other.ndim == 1:
+
+            assert len(other) == self.shape[1]
+
+            out = [np.zeros_like(other[n1:n2]) for n1, n2 in zip(self.cum_block_sizes[:-1], self.cum_block_sizes[1:])]
+            other = [other[n1:n2] for n1, n2 in zip(self.cum_block_sizes[:-1], self.cum_block_sizes[1:])]
+
+
+        elif other.ndim == 2:
+
+            assert other.shape[0] == self.shape[1]
+
+            out = [np.zeros_like(other[n1:n2, :]) for n1, n2 in zip(self.cum_block_sizes[:-1], self.cum_block_sizes[1:])]
+            other = [other[n1:n2, :] for n1, n2 in zip(self.cum_block_sizes[:-1], self.cum_block_sizes[1:])]
+
+        else:
+            raise ValueError('other must be 1 or 2d')
+
+        for i in range(self.n_blocks):
+            for j in range(self.n_blocks):
+
+                out[i] += self.blocks[i][j] @ other[j]
+
+        return np.concatenate(out, axis=0)
+
+    def inv(self):
+        raise NotImplementedError
+
+    @property
+    def T(self):
+        return self.factor * KroneckerBlock(blocks=[[self.blocks[j][i].T for i in range(self.n_blocks)] for j in range(self.n_blocks)])
+
+    def to_array(self) -> ndarray:
+        return self.factor * np.block([[self.blocks[j][i].to_array() if isinstance(self.blocks[j][i], KroneckerOperator) else self.blocks[j][i] for i in range(self.n_blocks)] for j in range(self.n_blocks)])
+
+
+class KroneckerBlockDiag(KroneckerOperator):
+
+    def __init__(self, blocks: list):
+        """
+        Create a diagonal block operator. Items in the block can be arrays or operators.
+
+        E.g. blocks = [A1, A2, A3] -> [[A1, 0, 0]
+                                       [0, A2, 0]
+                                       [0, 0, A3]]
+        """
+
+        check_blocks_consistent(blocks)
+        self.blocks = blocks
+        self.block_sizes = [block.shape[0] for block in self.blocks]
+        self.cum_block_sizes = [0] + np.cumsum(self.block_sizes).tolist()
+
+        N = sum(self.block_sizes)
+        self.shape = (N, N)
+
+    def __copy__(self) -> 'KroneckerOperator':
+        new = KroneckerBlockDiag(blocks=[block.copy() if isinstance(block, KroneckerOperator) else block for block in self.blocks])
+        new.factor = self.factor
+        return new
+
+    def __deepcopy__(self, memodict={}) -> 'KroneckerOperator':
+        new = KroneckerBlockDiag(blocks=[block.deepcopy() if isinstance(block, KroneckerOperator) else block.copy() for block in self.blocks])
+        new.factor = self.factor
+        return new
+
+    def __pow__(self, power, modulo=None):
+        return self.factor ** power * KroneckerBlockDiag(blocks=[block ** power  for block in self.blocks])
+
+    def operate(self, other: ndarray) -> ndarray:
+        """
+        other should be a vector only
+        """
+
+        if other.ndim == 1:
+            assert len(other) == self.shape[1]
+            return np.concatenate([block @ other[n1:n2] for block, n1, n2 in zip(self.blocks, self.cum_block_sizes[:-1], self.cum_block_sizes[1:])], axis=0)
+
+        elif other.ndim == 2:
+            assert other.shape[0] == self.shape[1]
+            return np.concatenate([block @ other[n1:n2, :] for block, n1, n2 in zip(self.blocks, self.cum_block_sizes[:-1], self.cum_block_sizes[1:])], axis=0)
+
+    def inv(self) -> 'KroneckerBlockDiag':
+        return self.factor ** -1 * KroneckerBlockDiag(blocks=[block.inv() for block in self.blocks])
+
+    @property
+    def T(self):
+        return self.factor * KroneckerBlockDiag(blocks=[block.T for block in self.blocks])
+
+    def to_array(self) -> ndarray:
+
+        out = np.zeros(self.shape)
+
+        for block, n1, n2 in zip(self.blocks, self.cum_block_sizes[:-1], self.cum_block_sizes[1:]):
+
+            if isinstance(block, KroneckerOperator):
+                out[n1:n2, n1:n2] = block.to_array()
+            else:
+                out[n1:n2, n1:n2] = block
+
+        return out
+
+
+
 
 
 class _SumChain(KroneckerOperator):
@@ -537,14 +720,16 @@ def _run_tests(seed: int=1):
     N2 = 5
     N3 = 4
     N4 = 3
+    K = 5
 
     A1 = np.random.randn(N1, N1)
     A2 = np.random.randn(N2, N2)
     A3 = np.random.randn(N3, N3)
     A4 = np.random.randn(N4, N4)
 
-    X = np.random.randn(N4, N3, N2, N1)
+    Y = np.random.randn(N4, N3, N2, N1)
     D = np.random.randn(N4, N3, N2, N1)
+    Q = np.random.randn(N4 * N3 * N2 * N1, K)
 
     # create actual array structures
     kp_literal = kronecker_product_literal(A1, A2, A3, A4)
@@ -556,7 +741,10 @@ def _run_tests(seed: int=1):
     ks_optimised = KroneckerSum(A1, A2, A3, A4)
     kd_optimised = KroneckerDiag(D)
 
-    def run_assertions(literal, optimised):
+    def run_assertions(literal, optimised, X=None, P=None):
+
+        if X is None:
+            X = Y
 
         # test with @ operator
         assert np.allclose(literal @ vec(X), optimised @ vec(X))                      # test forward matrix multiplication
@@ -576,6 +764,14 @@ def _run_tests(seed: int=1):
         # test literal conversion
         assert np.allclose(literal, optimised.to_array())
 
+        if P is None:
+            P = Q
+
+        # test multiplication onto a data matrix
+        assert np.allclose(literal @ P, optimised @ P)
+        assert np.allclose(P.T @ literal, P.T @ optimised)
+        assert np.allclose(P.T @ literal @ P, P.T @ optimised @ P)
+
 
     def test_kronecker_product():
         run_assertions(kp_literal, kp_optimised)
@@ -585,6 +781,34 @@ def _run_tests(seed: int=1):
 
     def test_kronecker_diag():
         run_assertions(kd_literal, kd_optimised)
+
+    def test_kronecker_block():
+
+        Y_ = np.random.randn(N4 * N3 * N2 * N1 * 2)
+        Q_ = np.random.randn(N4 * N3 * N2 * N1 * 2, K)
+
+        # create actual block array structures
+        k_block_literal = np.block([[kp_literal, kd_literal], [np.zeros(kp_literal.shape), ks_literal]])
+
+        # create lazy computation equivelants
+        k_block_optimised = KroneckerBlock([[kp_optimised, kd_optimised], [np.zeros(kp_literal.shape), ks_optimised]])
+
+        run_assertions(k_block_literal, k_block_optimised, X=Y_, P=Q_)
+        run_assertions(k_block_literal.T, k_block_optimised.T, X=Y_, P=Q_)
+
+    def test_kronecker_block_diag():
+
+        Y_ = np.random.randn(N4 * N3 * N2 * N1 * 2)
+        Q_ = np.random.randn(N4 * N3 * N2 * N1 * 2, K)
+
+        # create actual block array structures
+        k_block_diag_literal = np.block([[kp_literal, np.zeros(kp_literal.shape)], [np.zeros(kp_literal.shape), ks_literal]])
+
+        # create lazy computation equivelants
+        k_block_diag_optimised = KroneckerBlockDiag([kp_optimised, ks_optimised])
+
+        run_assertions(k_block_diag_literal, k_block_diag_optimised, X=Y_, P=Q_)
+        run_assertions(k_block_diag_literal.T, k_block_diag_optimised.T, X=Y_, P=Q_)
 
     def test_product_chain():
 
@@ -657,6 +881,8 @@ def _run_tests(seed: int=1):
     test_kronecker_product()
     test_kronecker_sum()
     test_kronecker_diag()
+    test_kronecker_block()
+    test_kronecker_block_diag()
     test_product_chain()
     test_sum_chain()
     test_operator_multiplcation()

@@ -85,6 +85,8 @@ def vec(X: ndarray) -> ndarray:
     """
     Convert a tensor X of any shape into a vector
     """
+    if X.ndim == 1:
+        return X
     return X.reshape(-1, order='F')
 
 
@@ -92,6 +94,9 @@ def ten(x: ndarray, shape: tuple=None, like: ndarray=None) -> ndarray:
     """
     Convert a vector x into a tensor of a given shape
     """
+
+    if x.shape == shape or (isinstance(like, ndarray) and x.shape == like.shape):
+        return x
 
     if x.ndim != 1:
         raise ValueError('x should be 1-dimensional')
@@ -108,6 +113,29 @@ def ten(x: ndarray, shape: tuple=None, like: ndarray=None) -> ndarray:
     elif like is not None:
         return x.reshape(like.shape, order='F')
 
+
+def vec_index(element: tuple, shape: tuple) -> int:
+    """
+    For a tensor X with shape `shape`, return the index that `elenent` is mapped to when performing vec(X).
+    This corresponds to offset calculuation in Fortran-style column-major memory layout.
+    see https://eli.thegreenplace.net/2015/memory-layout-of-multi-dimensional-arrays/.
+    """
+    return int(sum(n * np.prod(shape[:k]) for k, n in enumerate(element)))
+
+
+def ten_index(offset: int, shape: tuple) -> tuple:
+    """
+    For a vector x, find the element of the corresponding tensor that offset is mapped to. Effectively
+    the inverse of vec_index.
+    """
+    out = []
+
+    for N in shape:
+        x = offset % N
+        offset = offset // N
+        out.append(x)
+
+    return tuple(out)
 
 
 def is_diag(A: ndarray) -> bool:
