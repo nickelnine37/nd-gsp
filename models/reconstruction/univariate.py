@@ -1,5 +1,5 @@
 from graph.graphs import BaseGraph, Graph
-from graph.filters import FilterFunction, UnivariateFilterFunction
+from graph.filters import _FilterFunction, UnivariateFilterFunction
 from models.reconstruction.reconstruction_utils import get_y_and_s
 from utils.checks import check_valid_graph, check_compatible
 
@@ -21,7 +21,7 @@ class SignalProjector:
 
         self.s = s.astype(bool)
         self.N = len(s)
-        self.N_ = s.sum()
+        self.N_ = int(s.sum())
 
     def down_project_signal(self, f: ndarray):
         """
@@ -65,7 +65,7 @@ class UnivariateGraphSignalReconstructor:
     def __init__(self,
                  signal: ndarray,
                  graph: Union[BaseGraph, ndarray, nx.Graph],
-                 filter_function: FilterFunction,
+                 filter_function: _FilterFunction,
                  gamma: float):
 
 
@@ -135,6 +135,9 @@ class UnivariateGraphSignalReconstructor:
 
 
 if __name__ == '__main__':
+
+    np.set_printoptions(precision=3, linewidth=500, threshold=500, suppress=True, edgeitems=5)
+
 
     def run_tests():
 

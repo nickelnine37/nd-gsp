@@ -1,6 +1,6 @@
 import networkx as nx
 from graph.graphs import BaseGraph, Graph
-from graph.filters import FilterFunction
+from graph.filters import _FilterFunction
 from numpy import ndarray
 from typing import Union
 
@@ -26,7 +26,7 @@ def check_valid_graph(graph: Union[BaseGraph, ndarray, nx.Graph]) -> BaseGraph:
 
 def check_compatible(signal: ndarray = None,
                      graph: BaseGraph= None,
-                     filter_function: FilterFunction = None) -> None:
+                     filter_function: _FilterFunction = None) -> None:
     """
     Make sure that the signal, graph and filter function are all mutually compaible. Perform the following checks:
 
@@ -47,7 +47,7 @@ def check_compatible(signal: ndarray = None,
         assert isinstance(graph, BaseGraph)
 
     if filter_function is not None:
-        assert isinstance(filter_function, FilterFunction)
+        assert isinstance(filter_function, _FilterFunction)
 
     if signal is not None and graph is not None:
         assert signal.ndim == graph.ndim, f'The graph and the signal have a different number of dimenions ({graph.ndim} and {signal.ndim} respectively)'

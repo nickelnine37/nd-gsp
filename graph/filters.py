@@ -3,45 +3,55 @@ import numpy as np
 from typing import Callable, Union
 
 
-class FilterFunction:
+class _FilterFunction:
+    """
+    Abstract base class for a graph filter function object. Should not be used directly. Use one of
 
-    # inheriting classes should create these instance variables
-    filter = None
-    beta = None
-    ndim = None
+        * UnivariateFilterFunction
+        * MultivariateFilterFunction
+
+    """
+
+
+    filter: Callable = None
+    beta: float | ndarray = None
+    ndim: int = None
     
-    def __init__(self, filter: Callable, beta: Union[float, ndarray]):
+    def __init__(self, filter: Callable, beta: float | ndarray):
         self.filter = filter
         self.beta = beta
 
-    @classmethod
-    def random_walk(cls, beta: Union[float, ndarray]):
-        return NotImplemented
+    def __copy__(self):
 
-    @classmethod
-    def diffusion(cls, beta: Union[float, ndarray]):
-        return NotImplemented
 
     @classmethod
-    def ReLu(cls, beta: Union[float, ndarray]):
-        return NotImplemented
+    def random_walk(cls, beta: float | ndarray) -> '_FilterFunction':
+        raise NotImplementedError
 
     @classmethod
-    def sigmoid(cls, beta: Union[float, ndarray]):
-        return NotImplemented
+    def diffusion(cls, beta: float | ndarray) -> '_FilterFunction':
+        raise NotImplementedError
 
     @classmethod
-    def bandlimited(cls, beta: Union[float, ndarray]):
-        return NotImplemented
+    def ReLu(cls, beta: float | ndarray) -> '_FilterFunction':
+        raise NotImplementedError
 
-    def set_beta(self, beta: Union[float, ndarray]):
-        return NotImplemented
+    @classmethod
+    def sigmoid(cls, beta: float | ndarray) -> '_FilterFunction':
+        raise NotImplementedError
 
-    def __call__(self, Lams: ndarray):
-        return NotImplemented
+    @classmethod
+    def bandlimited(cls, beta: float | ndarray) -> '_FilterFunction':
+        raise NotImplementedError
+
+    def set_beta(self, beta: float | ndarray) -> '_FilterFunction':
+        raise NotImplementedError
+
+    def __call__(self, Lams: float | ndarray | list) -> float | ndarray:
+        raise NotImplementedError
 
 
-class UnivariateFilterFunction(FilterFunction):
+class UnivariateFilterFunction(_FilterFunction):
     """
     Class to represent a simple graph filter. Initialise with one of the constructors:
 
@@ -52,31 +62,31 @@ class UnivariateFilterFunction(FilterFunction):
         * bandlimited
 
     each of which take a single beta float parameter. Aliternatively, can be initialised
-    with a custom graph filter function.
+    with a custom graph filter function in __init__()
 
     Examples:
 
     # ------- use with builtin filter -------
 
-    fil = GraphFilter.random_walk(beta=1.5)
+    fil = UnivariateFilterFunction.random_walk(beta=1.5)
 
-    fil(2)
+    >>> fil(2)
     >>> 0.25
 
     fil(np.random.uniform(0, 4, (4, 4)))
-    >>> [[0.258 0.165 0.253 0.278]
+     [[0.258 0.165 0.253 0.278]
          [0.154 0.249 0.506 0.181]
          [0.17  0.334 0.694 0.305]
          [0.391 0.439 0.226 0.518]]
 
     # ------- use with custom filter --------
 
-    def two_hop_random_walk(lam, beta):
-        return (1 + beta * lam) ** -2
-
-    fil = GraphFilter(two_hop_random_walk, beta=1)
-
-    fil(3)
+    >>> def two_hop_random_walk(lam, beta):
+    >>>     return (1 + beta * lam) ** -2
+    >>>
+    >>> fil = UnivariateFilterFunction(two_hop_random_walk, beta=1)
+    >>>
+    >>> fil(3.0)
     >>> 0.0625
 
     """
@@ -108,11 +118,11 @@ class UnivariateFilterFunction(FilterFunction):
     def set_beta(self, beta: float):
         self.beta = beta
 
-    def __call__(self, lam: ndarray):
+    def __call__(self, lam: float | ndarray):
         return self.filter(lam, self.beta)
 
 
-class MultivariateFilterFunction(FilterFunction):
+class MultivariateFilterFunction(_FilterFunction):
     """
     This slightly more complex filter type can handle different parameters in
     different dimensions. We have  list of parameters, betas, and a list of
@@ -122,16 +132,13 @@ class MultivariateFilterFunction(FilterFunction):
 
     Example:
 
-    fil = SpaceTimeGraphFilter.random_walk(betas=[1, 2, 3])
-
-    lams = [np.random.randn(2, 2, 2) for i in range(3)]
-    fil(lams)
-
-    >>> array([[[ 1.133,  0.57 ],
-                [-0.624,  0.447]],
-
-               [[-0.64 ,  0.161],
-                [ 0.279, -0.273]]])
+    >>> fil = MultivariateFilterFunction.random_walk(betas=[1, 2, 3])
+    >>> lams = [np.random.randn(2, 2, 2) for i in range(3)]
+    >>> fil(lams)
+    >>> ndarray([[[ 1.133,  0.57 ],
+    >>>           [-0.624,  0.447]],
+    >>>          [[-0.64 ,  0.161],
+    >>>           [ 0.279, -0.273]]])
 
     """
 
@@ -167,6 +174,6 @@ class MultivariateFilterFunction(FilterFunction):
         assert len(beta) == self.ndim, f'beta should be length {self.ndim} but it is length {len(beta)}'
         self.beta = beta
 
-    def __call__(self, Lams: ndarray):
+    def __call__(self, Lams: ndarray | list):
         assert len(Lams) == self.ndim, f'Lams should be length {self.ndim} but it is length {len(Lams)}'
         return self.filter(Lams, self.beta)

@@ -1,14 +1,18 @@
 from numpy import ndarray
 import numpy as np
-from typing import Callable
+from typing import Callable, Union
+
+from scipy.sparse import spmatrix
+
+from utils.kronecker import KroneckerOperator
 
 
 def solve_SIM(y: ndarray,
-              Minv: Callable,
-              MinvN: Callable,
+              Minv: Union[ndarray, KroneckerOperator, spmatrix],
+              MinvN: Union[ndarray, KroneckerOperator, spmatrix],
               tol: float=1e-5,
               verbose: bool=True,
-              max_iter=20000):
+              max_iter=20000) -> tuple[ndarray, int]:
     """
     Compute the Stationary Iterative Method solution to the linear equation Ax = y, where A
     has been split as A = M - N. To complete the algorithm, provide efficient implementations
@@ -17,19 +21,19 @@ def solve_SIM(y: ndarray,
         * x -> M^{-1} x
         * x -> M^{-1} N x
 
-    as callable functions. `tol` specifies
     """
 
-    dx = Minv(y)
+    dx = Minv @ y
     x = np.zeros_like(dx)
 
     x += dx
     nits = 0
 
     dx_max = dx.max()
+
     while (dx_max > tol).any():
 
-        dx = MinvN(dx)
+        dx = MinvN @ dx
         dx_max = dx.max()
         x += dx
         nits += 1
@@ -42,4 +46,5 @@ def solve_SIM(y: ndarray,
             break
 
     return x, nits
+
 

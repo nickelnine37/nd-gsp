@@ -1,5 +1,5 @@
 from graph.graphs import BaseGraph
-from graph.filters import FilterFunction, MultivariateFilterFunction
+from graph.filters import _FilterFunction, MultivariateFilterFunction
 from utils.checks import check_valid_graph, check_compatible
 from typing import Union
 from numpy import ndarray
@@ -9,7 +9,7 @@ import networkx as nx
 
 def smooth_graph_signal(signal: ndarray,
                         graph: Union[BaseGraph, ndarray, nx.Graph],
-                        filter_function: FilterFunction,
+                        filter_function: _FilterFunction,
                         gamma: float) -> tuple[ndarray, ndarray]:
     """
     Smooth a graph signal according to the Bayesian model. This is a wrapper for the class GraphSignalSmoother,
@@ -36,7 +36,7 @@ class GraphSignalSmoother:
 
     def __init__(self,
                  graph: Union[BaseGraph, ndarray, nx.Graph],
-                 filter_function: FilterFunction,
+                 filter_function: _FilterFunction,
                  gamma: float):
         """
         Create an object for performing graph signal smoothing

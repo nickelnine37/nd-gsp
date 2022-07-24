@@ -1,7 +1,7 @@
 from algorithms.cgm import solve_SPCGM
 from algorithms.sim import solve_SIM
 from graph.graphs import BaseGraph, Graph, ProductGraph
-from graph.filters import FilterFunction, UnivariateFilterFunction, MultivariateFilterFunction
+from graph.filters import _FilterFunction, UnivariateFilterFunction, MultivariateFilterFunction
 from models.reconstruction.reconstruction_utils import get_y_and_s
 from utils.checks import check_valid_graph, check_compatible
 from utils.kronecker import KroneckerDiag
@@ -19,7 +19,7 @@ class MultivariateGraphSignalReconstructor:
     def __init__(self,
                  signal: ndarray,
                  graph: Union[BaseGraph, ndarray, nx.Graph],
-                 filter_function: FilterFunction,
+                 filter_function: _FilterFunction,
                  gamma: float):
 
         self.Y, self.S = get_y_and_s(signal)
@@ -66,10 +66,10 @@ class MultivariateGraphSignalReconstructor:
         Phi = self.graph.U @ DG
         PhiT = Phi.T
 
-        return solve_SPCGM(A_precon=lambda x: A_precon @ x,
+        return solve_SPCGM(A_precon=A_precon,
                            y=Y,
-                           Phi=lambda x: Phi @ x,
-                           PhiT=lambda x: PhiT @ x,
+                           Phi=Phi,
+                           PhiT=PhiT,
                            reltol=tol,
                            verbose=verbose)
 
@@ -80,10 +80,12 @@ class MultivariateGraphSignalReconstructor:
 
         J = self.G ** 2 / (self.G ** 2 + self.gamma)
         S_ = 1 - self.S
+        Minv = self.graph.U @ KroneckerDiag(J) @ self.graph.U.T
+        MinvN = Minv @ KroneckerDiag(S_)
 
         return solve_SIM(Y,
-                         Minv=lambda X: self.graph.scale_spectral(X, J),
-                         MinvN=lambda X: self.graph.scale_spectral(S_ * X, J),
+                         Minv=Minv,
+                         MinvN=MinvN,
                          tol=tol,
                          verbose=verbose)
 
@@ -111,7 +113,7 @@ class MultivariateGraphSignalReconstructor:
 
     def estimate_var(self, method='cgm', tol=1e-5, verbose: bool=True) -> ndarray:
 
-        def query(element: tuple):
+        def query(element: tuple) -> float:
             """
             Directly compute the posterior variance at index `element`
             """

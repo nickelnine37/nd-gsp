@@ -25,18 +25,42 @@ matrices.
 """
 
 
-def check_valid_matrices(*As):
+def check_valid_matrices(*As) -> bool:
     assert all(isinstance(A, (ndarray, spmatrix)) for A in As)
     assert all(A.ndim == 2 for A in As)
     assert all(A.shape[0] == A.shape[1] for A in As)
+    return True
 
 
-def check_operators_consistent(*operators):
+def check_operators_consistent(*operators) -> bool:
     assert all(isinstance(A, KroneckerOperator) for A in operators), f'All operators in this chain must be consistent, but they have types {[type(operator) for operator in operators]} respectively'
     assert all(op1.shape == op2.shape for op1, op2 in zip(operators[1:], operators[:-1])), f'All operators in this chain should have the same shape, but they have shapes {[operator.shape for operator in operators]} respectively'
+    return True
 
-def check_blocks_consistent(blocks):
-    pass
+def check_blocks_consistent(blocks: list):
+
+    ndim = np.asarray(blocks, dtype='object').ndim
+
+    if ndim == 1:
+        assert all(isinstance(block, (KroneckerOperator, ndarray, spmatrix)) for block in blocks)
+        assert all(block.shape[0] == block.shape[1] for block in blocks)
+
+    elif ndim == 2:
+
+        # check diagonal blocks are square
+        assert all(blocks[i][i].shape[0] == blocks[i][i].shape[1] for i in range(len(blocks)))
+        shapes = [blocks[i][i].shape[0] for i in range(len(blocks))]
+
+        for i in range(len(blocks)):
+            for j in range(len(blocks)):
+                assert isinstance(blocks[i][j], (KroneckerOperator, ndarray, spmatrix))
+                assert blocks[i][j].shape == (shapes[i], shapes[j])
+
+    else:
+        raise ValueError(f'blocks should be 1d or 2d but it is {np.ndim(blocks)}d')
+
+    return True
+
 
 class KroneckerOperator:
     """
@@ -50,7 +74,6 @@ class KroneckerOperator:
     shape: tuple = None         # full (N, N) operator shape
     shapes: tuple = None        # (N1, N2, ...) individual shapes
     ndim: int = None            # number of dimensions
-
 
     def __copy__(self) -> 'KroneckerOperator':
         """
@@ -110,7 +133,6 @@ class KroneckerOperator:
         else:
             raise TypeError('General Kronecker operators can only be scaled by a number')
 
-
     def __rmul__(self, other: Union['KroneckerOperator', Number]) -> 'KroneckerOperator':
         """
         Hadamard and scaler multiples are commutitive
@@ -160,6 +182,15 @@ class KroneckerOperator:
         -Obj == (-1) * Obj
         """
         return (-1) * self
+
+    def __len__(self):
+        return self.shape[0]
+
+    def __str__(self):
+        return f'KroneckerOperator{self.shape}'
+
+    def __repr__(self):
+        return f'KroneckerOperator{self.shape}'
 
     def __array_ufunc__(self, method, *inputs, **kwargs):
         """
@@ -247,7 +278,6 @@ class KroneckerOperator:
         Return the complex conjugate of the operator
         """
         raise NotImplementedError
-
 
     def to_array(self) -> ndarray:
         """
@@ -347,8 +377,6 @@ class KroneckerProduct(KroneckerOperator):
         return 'KroneckerProduct({})'.format(' ⊗ '.join([str(len(A)) for A in self.As]))
 
 
-
-
 class KroneckerSum(KroneckerOperator):
     """
     Used to represent the object (A1 ⊕ A2 ⊕ ... ⊕ AN), that is the Kronecker sum of N square matrices.
@@ -422,7 +450,7 @@ class KroneckerDiag(KroneckerOperator):
         assert isinstance(A, ndarray)
         assert A.ndim > 1, 'The operator diagonal A should be in tensor format, but it is in vector format'
 
-        self.A = A
+        self.A = A.astype(float)
         self.ndim = A.ndim
         self.shapes = tuple(reversed(A.shape))
         N = int(np.prod(self.shapes))
@@ -506,6 +534,7 @@ class KroneckerBlock(KroneckerOperator):
         self.n_blocks = len(self.blocks)
         self.block_sizes = [self.blocks[i][i].shape[0] for i in range(self.n_blocks)]
         self.cum_block_sizes = [0] + np.cumsum(self.block_sizes).tolist()
+        self.iter_edges = lambda: zip(self.cum_block_sizes[:-1], self.cum_block_sizes[1:])
 
         N = sum(self.block_sizes)
         self.shape = (N, N)
@@ -525,32 +554,33 @@ class KroneckerBlock(KroneckerOperator):
         new.factor = self.factor ** power
         return new
 
+
     def operate(self, other: ndarray) -> ndarray:
+
 
         if other.ndim == 1:
 
             assert len(other) == self.shape[1]
 
-            out = [np.zeros_like(other[n1:n2]) for n1, n2 in zip(self.cum_block_sizes[:-1], self.cum_block_sizes[1:])]
-            other = [other[n1:n2] for n1, n2 in zip(self.cum_block_sizes[:-1], self.cum_block_sizes[1:])]
-
+            out = [np.zeros_like(other[n1:n2]) for n1, n2 in self.iter_edges()]
+            other = [other[n1:n2] for n1, n2 in self.iter_edges()]
 
         elif other.ndim == 2:
 
             assert other.shape[0] == self.shape[1]
 
-            out = [np.zeros_like(other[n1:n2, :]) for n1, n2 in zip(self.cum_block_sizes[:-1], self.cum_block_sizes[1:])]
-            other = [other[n1:n2, :] for n1, n2 in zip(self.cum_block_sizes[:-1], self.cum_block_sizes[1:])]
+            out = [np.zeros_like(other[n1:n2, :]) for n1, n2 in self.iter_edges()]
+            other = [other[n1:n2, :] for n1, n2 in self.iter_edges()]
 
         else:
-            raise ValueError('other must be 1 or 2d')
+            raise ValueError(f'other must be 1 or 2d but it is {other.ndim}d')
 
         for i in range(self.n_blocks):
             for j in range(self.n_blocks):
-
                 out[i] += self.blocks[i][j] @ other[j]
 
-        return np.concatenate(out, axis=0)
+        return self.factor * np.concatenate(out, axis=0)
+
 
     def inv(self):
         raise NotImplementedError
@@ -564,6 +594,16 @@ class KroneckerBlock(KroneckerOperator):
 
     def to_array(self) -> ndarray:
         return self.factor * np.block([[self.blocks[j][i].to_array() if isinstance(self.blocks[j][i], KroneckerOperator) else self.blocks[j][i] for i in range(self.n_blocks)] for j in range(self.n_blocks)])
+
+    def __repr__(self):
+
+        def to_string(block):
+            return str(block) if isinstance(block, KroneckerOperator) else f'ndarray({block.shape})'
+
+        return 'KroneckerBlock([{}])'.format(', '.join(['[' + ', '.join([to_string(self.blocks[i][j]) for j in range(self.n_blocks)]) + ']' for i in range(self.n_blocks)]))
+
+    def __str__(self):
+        return self.__repr__()
 
 
 class KroneckerBlockDiag(KroneckerOperator):
@@ -579,8 +619,10 @@ class KroneckerBlockDiag(KroneckerOperator):
 
         check_blocks_consistent(blocks)
         self.blocks = blocks
+        self.n_blocks = len(self.blocks)
         self.block_sizes = [block.shape[0] for block in self.blocks]
         self.cum_block_sizes = [0] + np.cumsum(self.block_sizes).tolist()
+        self.iter_edges = lambda: zip(self.cum_block_sizes[:-1], self.cum_block_sizes[1:])
 
         N = sum(self.block_sizes)
         self.shape = (N, N)
@@ -605,11 +647,15 @@ class KroneckerBlockDiag(KroneckerOperator):
 
         if other.ndim == 1:
             assert len(other) == self.shape[1]
-            return np.concatenate([block @ other[n1:n2] for block, n1, n2 in zip(self.blocks, self.cum_block_sizes[:-1], self.cum_block_sizes[1:])], axis=0)
+            return self.factor * np.concatenate([block @ other[n1:n2] for block, (n1, n2) in zip(self.blocks, self.iter_edges())], axis=0)
 
         elif other.ndim == 2:
             assert other.shape[0] == self.shape[1]
-            return np.concatenate([block @ other[n1:n2, :] for block, n1, n2 in zip(self.blocks, self.cum_block_sizes[:-1], self.cum_block_sizes[1:])], axis=0)
+            return self.factor * np.concatenate([block @ other[n1:n2, :] for block, (n1, n2) in zip(self.blocks, self.iter_edges())], axis=0)
+
+        else:
+            raise ValueError('other must be 1 or 2d')
+
 
     def inv(self) -> 'KroneckerBlockDiag':
         return self.factor ** -1 * KroneckerBlockDiag(blocks=[block.inv() for block in self.blocks])
@@ -625,7 +671,7 @@ class KroneckerBlockDiag(KroneckerOperator):
 
         out = np.zeros(self.shape)
 
-        for block, n1, n2 in zip(self.blocks, self.cum_block_sizes[:-1], self.cum_block_sizes[1:]):
+        for block, (n1, n2) in zip(self.blocks, self.iter_edges()):
 
             if isinstance(block, KroneckerOperator):
                 out[n1:n2, n1:n2] = block.to_array()
@@ -634,8 +680,11 @@ class KroneckerBlockDiag(KroneckerOperator):
 
         return out
 
+    def __repr__(self):
+        return 'KroneckerBlockDiag([{}])'.format(', '.join([str(block) if isinstance(block, KroneckerOperator) else f'ndarray{block.shape}' for block in self.blocks]))
 
-
+    def __str__(self):
+        return 'KroneckerBlockDiag([{}])'.format(', '.join([str(block) if isinstance(block, KroneckerOperator) else f'ndarray{block.shape}' for block in self.blocks]))
 
 
 class _SumChain(KroneckerOperator):
@@ -678,11 +727,11 @@ class _SumChain(KroneckerOperator):
     def to_array(self) -> ndarray:
         return self.factor * sum(operator.to_array() for operator in self.chain)
 
-    def __repr__(self):
-        return 'SumChain({})'.format(', '.join([str(operator) for operator in self.chain]))
-
-    def __str__(self):
-        return 'SumChain({})'.format(', '.join([str(operator) for operator in self.chain]))
+    # def __repr__(self):
+    #     return 'SumChain({})'.format(', '.join([str(operator) for operator in self.chain]))
+    #
+    # def __str__(self):
+    #     return 'SumChain({})'.format(', '.join([str(operator) for operator in self.chain]))
 
 
 class _ProductChain(KroneckerOperator):
@@ -730,11 +779,15 @@ class _ProductChain(KroneckerOperator):
             out = A.to_array() @ out
         return self.factor * out
 
-    def __repr__(self):
-        return 'ProductChain({})'.format(', '.join([str(operator) for operator in self.chain]))
+    # def __repr__(self):
+    #     return 'ProductChain({})'.format(', '.join([str(operator) for operator in self.chain]))
+    #
+    # def __str__(self):
+    #     return 'ProductChain({})'.format(', '.join([str(operator) for operator in self.chain]))
 
-    def __str__(self):
-        return 'ProductChain({})'.format(', '.join([str(operator) for operator in self.chain]))
+    def __pow__(self, power, modulo=None):
+        raise NotImplementedError
+
 
 
 
@@ -763,16 +816,21 @@ def _run_tests(seed: int=1):
     kp_literal = kronecker_product_literal(A1, A2, A3, A4)
     ks_literal = kronecker_sum_literal(A1, A2, A3, A4)
     kd_literal = kronecker_diag_literal(D)
+    kb_literal = np.block([[kp_literal, kd_literal], [np.zeros(kp_literal.shape), ks_literal]])
+    kbd_literal = np.block([[kp_literal, np.zeros(kp_literal.shape)], [np.zeros(kp_literal.shape), ks_literal]])
 
     # create lazy computation equivelants
     kp_optimised = KroneckerProduct(A1, A2, A3, A4)
     ks_optimised = KroneckerSum(A1, A2, A3, A4)
     kd_optimised = KroneckerDiag(D)
+    kb_optimised = KroneckerBlock([[kp_optimised, kd_optimised], [np.zeros(kp_literal.shape), ks_optimised]])
+    kbd_optimised = KroneckerBlockDiag([kp_optimised, ks_optimised])
 
-    def run_assertions(literal, optimised, X=None, P=None):
 
-        if X is None:
-            X = Y
+    def run_regular_assertions(literal: ndarray, optimised: KroneckerOperator):
+
+        X = np.random.randn(N4, N3, N2, N1)
+        P = np.random.randn(N4 * N3 * N2 * N1, K)
 
         # test with @ operator
         assert np.allclose(literal @ vec(X), optimised @ vec(X))                      # test forward matrix multiplication
@@ -792,8 +850,22 @@ def _run_tests(seed: int=1):
         # test literal conversion
         assert np.allclose(literal, optimised.to_array())
 
-        if P is None:
-            P = Q
+        # test multiplication onto a data matrix
+        assert np.allclose(literal @ P, optimised @ P)
+        assert np.allclose(P.T @ literal, P.T @ optimised)
+        assert np.allclose(P.T @ literal @ P, P.T @ optimised @ P)
+
+    def run_block_assertions(literal: ndarray, optimised: Union[KroneckerBlock, KroneckerBlockDiag]):
+
+        X1 = np.random.randn(N4 * N3 * N2 * N1 * 2)
+        P = np.random.randn(N4 * N3 * N2 * N1 * 2, K)
+
+        # test with @ operator
+        assert np.allclose(literal @ X1, optimised @ X1)
+        assert np.allclose(X1 @ literal, X1 @ optimised)
+        assert np.isclose(X1 @ literal @ X1, X1 @ optimised @ X1)
+
+        assert np.allclose(literal, optimised.to_array())
 
         # test multiplication onto a data matrix
         assert np.allclose(literal @ P, optimised @ P)
@@ -802,89 +874,69 @@ def _run_tests(seed: int=1):
 
 
     def test_kronecker_product():
-        run_assertions(kp_literal, kp_optimised)
+        run_regular_assertions(kp_literal, kp_optimised)
 
     def test_kronecker_sum():
-        run_assertions(ks_literal, ks_optimised)
+        run_regular_assertions(ks_literal, ks_optimised)
 
     def test_kronecker_diag():
-        run_assertions(kd_literal, kd_optimised)
+        run_regular_assertions(kd_literal, kd_optimised)
 
     def test_kronecker_block():
 
-        Y_ = np.random.randn(N4 * N3 * N2 * N1 * 2)
-        Q_ = np.random.randn(N4 * N3 * N2 * N1 * 2, K)
+        run_block_assertions(kb_literal, kb_optimised)
+        run_block_assertions(kb_literal.T, kb_optimised.T)
+        run_block_assertions(kbd_literal, kbd_optimised)
+        run_block_assertions(kbd_literal.T, kbd_optimised.T)
 
-        # create actual block array structures
-        k_block_literal = np.block([[kp_literal, kd_literal], [np.zeros(kp_literal.shape), ks_literal]])
-
-        # create lazy computation equivelants
-        k_block_optimised = KroneckerBlock([[kp_optimised, kd_optimised], [np.zeros(kp_literal.shape), ks_optimised]])
-
-        run_assertions(k_block_literal, k_block_optimised, X=Y_, P=Q_)
-        run_assertions(k_block_literal.T, k_block_optimised.T, X=Y_, P=Q_)
-
-    def test_kronecker_block_diag():
-
-        Y_ = np.random.randn(N4 * N3 * N2 * N1 * 2)
-        Q_ = np.random.randn(N4 * N3 * N2 * N1 * 2, K)
-
-        # create actual block array structures
-        k_block_diag_literal = np.block([[kp_literal, np.zeros(kp_literal.shape)], [np.zeros(kp_literal.shape), ks_literal]])
-
-        # create lazy computation equivelants
-        k_block_diag_optimised = KroneckerBlockDiag([kp_optimised, ks_optimised])
-
-        run_assertions(k_block_diag_literal, k_block_diag_optimised, X=Y_, P=Q_)
-        run_assertions(k_block_diag_literal.T, k_block_diag_optimised.T, X=Y_, P=Q_)
 
     def test_product_chain():
 
         literal = ks_literal @  kd_literal @ kp_literal
         optimised = _ProductChain(ks_optimised, kd_optimised, kp_optimised)
-        run_assertions(literal, optimised)
+        run_regular_assertions(literal, optimised)
 
     def test_sum_chain():
 
         literal = ks_literal + kd_literal + kp_literal
         optimised = _SumChain(ks_optimised, kd_optimised, kp_optimised)
-        run_assertions(literal, optimised)
+        run_regular_assertions(literal, optimised)
 
     def test_operator_multiplcation():
 
         literal = ks_literal @ kd_literal @ kp_literal
         optimised = ks_optimised @ kd_optimised @ kp_optimised
-        run_assertions(literal, optimised)
+        run_regular_assertions(literal, optimised)
 
     def test_operator_addition():
 
         literal = ks_literal + kd_literal + kp_literal
         optimised = ks_optimised + kd_optimised + kp_optimised
-        run_assertions(literal, optimised)
+        run_regular_assertions(literal, optimised)
 
     def test_operator_subtraction():
 
         literal = kd_literal - kp_literal
         optimised = kd_optimised - kp_optimised
-        run_assertions(literal, optimised)
+        run_regular_assertions(literal, optimised)
 
     def test_operator_scaling():
 
         literal = 2 * ks_literal + kd_literal / 5 - (13 / 11) * kp_literal
         optimised = 2 * ks_optimised + kd_optimised / 5 - (13 / 11) * kp_optimised
-        run_assertions(literal, optimised)
+        run_regular_assertions(literal, optimised)
 
     def test_kronecker_hadamard():
 
         literal = 2 * kp_literal * 4 * kp_literal.T
         optimised = 2 * kp_optimised * 4 * kp_optimised.T
-        run_assertions(literal, optimised)
+        run_regular_assertions(literal, optimised)
 
     def test_kronecker_pow():
 
         literal = kp_literal ** 2 + kd_literal ** 3
         optimised = kp_optimised ** 2 + kd_optimised ** 3
-        run_assertions(literal, optimised)
+        run_regular_assertions(literal, optimised)
 
     def test_assorted_expressions():
 
@@ -900,17 +952,16 @@ def _run_tests(seed: int=1):
         optimised4 = (kp_optimised - ks_optimised @   kd_optimised).T @ ks_optimised
         optimised5 = (kp_optimised * kp_optimised.T) @  kp_optimised.T
 
-        run_assertions(literal1, optimised1)
-        run_assertions(literal2, optimised2)
-        run_assertions(literal3, optimised3)
-        run_assertions(literal4, optimised4)
-        run_assertions(literal5, optimised5)
+        run_regular_assertions(literal1, optimised1)
+        run_regular_assertions(literal2, optimised2)
+        run_regular_assertions(literal3, optimised3)
+        run_regular_assertions(literal4, optimised4)
+        run_regular_assertions(literal5, optimised5)
 
     test_kronecker_product()
     test_kronecker_sum()
     test_kronecker_diag()
     test_kronecker_block()
-    test_kronecker_block_diag()
     test_product_chain()
     test_sum_chain()
     test_operator_multiplcation()
