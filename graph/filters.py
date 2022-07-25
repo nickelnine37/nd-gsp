@@ -21,8 +21,6 @@ class _FilterFunction:
         self.filter = filter
         self.beta = beta
 
-    def __copy__(self):
-
 
     @classmethod
     def random_walk(cls, beta: float | ndarray) -> '_FilterFunction':

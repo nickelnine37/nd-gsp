@@ -139,11 +139,8 @@ class LFPVarSolver(VarSolver):
         self.graph = graph
         self.filter_function = filter_function
 
-        self.S_ = ten(self.X[:, 0], like=Q)
+        self.S_ = ten(self.X[:, 1], like=Q)
         self.A_ = ten(self.X[:, -2], like=Q)
-
-        print(self.rmse(self.x0))
-
 
     def H(self, Y: ndarray, beta: float | ndarray):
         """
@@ -156,6 +153,7 @@ class LFPVarSolver(VarSolver):
             G = self.filter_function(self.graph.lams)
         else:
             G = self.filter_function(self.graph.lam)
+
 
         return self.graph.scale_spectral(Y, G)
 
@@ -172,7 +170,7 @@ class LFPVarSolver(VarSolver):
             beta1 = v[2]
             beta2 = v[4]
 
-        return v[0] + v[1] * self.H(self.S_, beta1) + v[3] * self.H(self.A_, beta2)
+        return v[0] + v[1] * self.H(self.S_, beta1) + v[2+self.filter_function.ndim] * self.H(self.A_, beta2)
 
     def objective(self, v: ndarray):
         """
@@ -344,16 +342,42 @@ if __name__ == '__main__':
             plt.tight_layout()
             plt.show()
 
-        # test_ridge_regression()
-        # test_rnc_regression()
 
-        # demonstrate_ridge_regression()
-        # demonstrate_rnc_regression()
+        def demonstrate_lfp_regression_mvf():
+
+            fig, axes = plt.subplots(ncols=3, nrows=4, figsize=(6, 8))
+
+            axes[0, 0].imshow(Omega_true)
+            axes[0, 0].set_title('Ω true')
+
+            filter_function = MultivariateFilterFunction.diffusion(beta=np.array([1.0, 1.0]))
+
+            for ax, lam in zip(axes.flatten()[1:], np.logspace(-3, 1, 11)):
+
+                estimator_rnc =  LFPVarSolver(Omega_Q, Q, X, graph, filter_function, lam=lam)
+                ax.imshow(estimator_rnc.predict(), vmin=Omega_true.min(), vmax=Omega_true.max())
+                ax.set_title(f'λ = {lam:.3f}')
+
+            for ax in axes.flatten():
+                ax.set_xticks([])
+                ax.set_yticks([])
+
+            fig.suptitle('LFP Estimates, Multivariate Filter Function')
+
+            plt.tight_layout()
+            plt.show()
+
+        test_ridge_regression()
+        test_rnc_regression()
+
+        demonstrate_ridge_regression()
+        demonstrate_rnc_regression()
         demonstrate_lfp_regression()
+        demonstrate_lfp_regression_mvf()
 
-
+        print('All tests passed')
 
     run_tests()
 
-    print('All tests passed')
+
 

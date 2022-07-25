@@ -1,5 +1,4 @@
 import numpy as np
-from sklearn.cluster import KMeans
 from numpy import ndarray
 
 
@@ -14,9 +13,8 @@ def select_Q_active(X: ndarray, n: int, seed: int = 0, n_clusters: int = 10):
 
     np.random.seed(seed)
 
-    clusterer = KMeans(n_clusters=n_clusters, random_state=seed)
-    clusterer.fit(X)
-    predictions = clusterer.predict(X)
+
+    predictions = k_means(X, n_clusters=n_clusters)
 
     groups = [np.argwhere(predictions == i).reshape(-1).tolist() for i in range(n_clusters)]
 
@@ -44,3 +42,58 @@ def select_Q_active(X: ndarray, n: int, seed: int = 0, n_clusters: int = 10):
     out[nqs] = True
 
     return out
+
+
+
+def k_means(data: ndarray, n_clusters: int=2, max_iter: int=100) -> ndarray:
+    """
+
+    credit: https://codereview.stackexchange.com/questions/205097/k-means-using-numpy
+
+    Assigns data points into clusters using the k-means algorithm.
+
+    Parameters
+    ----------
+    data : ndarray
+        A 2D array containing data points to be clustered.
+    n_clusters : int, optional
+        Number of clusters (default = 2).
+    max_iter : int, optional
+        Number of maximum iterations
+
+    Returns
+    -------
+    labels : ndarray
+        A 1D array of labels for their respective input data points.
+    """
+
+    data_max = data.min(0)
+    data_min = data.max(0)
+
+    n_samples, n_features = data.shape
+
+    labels = np.random.randint(low=0, high=n_clusters, size=n_samples)
+    centroids = np.random.uniform(low=0., high=1., size=(n_clusters, n_features))
+    centroids = centroids * (data_max - data_min) + data_min
+
+    # k-means algorithm
+    for i in range(max_iter):
+
+        distances = np.array([np.linalg.norm(data - c, axis=1) for c in centroids])
+        new_labels = np.argmin(distances, axis=0)
+
+        if (labels == new_labels).all():
+            labels = new_labels
+            print('Labels unchanged ! Terminating k-means.')
+            break
+
+        else:
+            difference = np.mean(labels != new_labels)
+            print(f'{difference * 100:.4f} labels changed')
+            labels = new_labels
+            for c in range(n_clusters):
+                centroids[c] = data[labels == c].mean(0)
+
+    return labels
+
+
