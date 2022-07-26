@@ -1,10 +1,10 @@
 from numpy import ndarray
 import numpy as np
-from typing import Callable, Union
+from typing import Union
 
 from scipy.sparse import spmatrix
 
-from utils.kronecker import KroneckerOperator
+from kronecker.kron_base import KroneckerOperator
 
 
 def solve_SIM(y: ndarray,

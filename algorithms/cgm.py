@@ -1,9 +1,9 @@
 import numpy as np
-from typing import Callable, Union
+from typing import Union
 from numpy import ndarray
 from scipy.sparse import spmatrix
 
-from utils.kronecker import KroneckerOperator
+from kronecker.kron_base import KroneckerOperator
 
 
 def solve_SPCGM(A_precon: Union[ndarray, KroneckerOperator, spmatrix],

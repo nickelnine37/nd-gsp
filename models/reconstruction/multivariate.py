@@ -1,17 +1,18 @@
 from algorithms.cgm import solve_SPCGM
+from algorithms.query import select_Q_active
 from algorithms.sim import solve_SIM
-from graph.graphs import BaseGraph, Graph, ProductGraph
+from graph.graphs import BaseGraph, ProductGraph
 from graph.filters import _FilterFunction, UnivariateFilterFunction, MultivariateFilterFunction
 from models.reconstruction.reconstruction_utils import get_y_and_s
 from utils.checks import check_valid_graph, check_compatible
-from utils.kronecker import KroneckerDiag
-from utils.linalg import vec, ten, vec_index, ten_index
+from kronecker.kron_base import KroneckerDiag
+from utils.linalg import vec, ten
+from models.reconstruction.var_estimators import RRVarSolver, LFPVarSolver, RNCVarSolver
 
 from typing import Union
 import numpy as np
-from numpy import eye as I, diag, ndarray
+from numpy import diag, ndarray
 import networkx as nx
-
 
 
 class MultivariateGraphSignalReconstructor:
@@ -37,6 +38,17 @@ class MultivariateGraphSignalReconstructor:
 
         else:
             self.G = self.filter_function(self.graph.lam)
+
+        n_neighbours = graph.A.sum(0)
+
+        self.X = np.array([np.ones(graph.N),
+                      vec(1 - self.S),
+                      graph.U @ KroneckerDiag(self.G) @ graph.U.T @ vec(1 - self.S),
+                      (graph.U ** 2) @ vec(self.G),
+                      (graph.U ** 2) @ vec(self.G ** 2),
+                      n_neighbours,
+                      graph.U @ KroneckerDiag(self.G) @ graph.U.T @ n_neighbours
+                      ]).T
 
     def set_gamma(self, gamma: float) -> 'MultivariateGraphSignalReconstructor':
         """
@@ -89,8 +101,7 @@ class MultivariateGraphSignalReconstructor:
                          tol=tol,
                          verbose=verbose)
 
-
-    def compute_mean(self, method='cgm', tol: float=1e-5, verbose: bool=True) -> ndarray:
+    def compute_mean(self, method='cgm', tol: float=1e-5, verbose: bool=False) -> ndarray:
         """
         Compute the reconstructed signal. `method` should be one of:
             * 'sim' for the Stationary Iterative Method
@@ -111,27 +122,64 @@ class MultivariateGraphSignalReconstructor:
 
         return result
 
-    def estimate_var(self, method='cgm', tol=1e-5, verbose: bool=True) -> ndarray:
+    def compute_logvar(self,
+                       n_queries: int,
+                       var_solver: str='lfp',
+                       lam: float=0.001,
+                       method='cgm',
+                       tol=1e-5,
+                       verbose: bool=True,
+                       seed: int=0) -> ndarray:
 
-        def query(element: tuple) -> float:
-            """
-            Directly compute the posterior variance at index `element`
-            """
+        Q = select_Q_active(self.X, n_queries, shape=self.S.shape, seed=seed)
+        Omega_Q = self.get_Omega_Q(Q, method=method, tol=tol, verbose=verbose)
 
-            Y = np.zeros_like(self.Y)
-            Y[element] = 1
+        if var_solver.lower() == 'lfp':
+            solver = LFPVarSolver(Omega_Q, Q, self.X, self.graph, self.filter_function, lam)
 
-            if method.lower() == 'sim':
-                result, nits = self._compute_sim(Y, tol, verbose)
+        elif var_solver.lower() == 'rr':
+            solver = RRVarSolver(Omega_Q, Q, self.X, lam)
 
-            elif method.lower() == 'cgm':
-                result, nits = self._compute_cgm(Y, tol, verbose)
+        elif var_solver.lower() == 'rnc':
+            solver = RNCVarSolver(Omega_Q, Q, self.X, self.graph, self.filter_function, self.gamma, lam)
 
-            else:
-                raise ValueError('`method` should be "sim" or "cgm"')
+        else:
+            raise ValueError('var_solver should be "lfp", "rr" or "rnc"')
 
-            return result[element]
+        return solver.predict()
 
+
+    def query(self, element: tuple, method='cgm', tol=1e-5, verbose: bool=False) -> float:
+        """
+        Directly compute the posterior variance at index `element`
+        """
+
+        Y = np.zeros_like(self.Y)
+        Y[element] = 1
+
+        if method.lower() == 'sim':
+            result, nits = self._compute_sim(Y, tol, verbose)
+
+        elif method.lower() == 'cgm':
+            result, nits = self._compute_cgm(Y, tol, verbose)
+
+        else:
+            raise ValueError('`method` should be "sim" or "cgm"')
+
+        return np.log(result[element])
+
+    def get_Omega_Q(self, Q: ndarray, method='cgm', tol=1e-5, verbose: bool=True):
+
+        om = np.zeros(self.S.shape)
+
+        for element in np.argwhere(Q):
+            element = tuple(element)
+            om[element] = self.query(element, method=method, tol=tol, verbose=verbose)
+
+        return om
+
+    def compute_logvar_full(self, method='cgm', tol=1e-5, verbose: bool=True):
+        return self.get_Omega_Q(np.ones_like(self.S), method=method, tol=tol, verbose=verbose)
 
 
 
@@ -143,25 +191,26 @@ if __name__ == '__main__':
     def run_tests():
 
         # set variables
-        N1 = 5
-        N2 = 6
-        N3 = 7
+        # N1 = 5
+        # N2 = 6
+        # N3 = 7
 
-        graph = ProductGraph.lattice(N1, N2, N3)
-        signal = np.random.randn(N3, N2, N1)
-        signal[np.random.randint(0, 2, (N3, N2, N1)).astype(bool)] = np.nan
+        Ns = (20, 25)
+
+        graph = ProductGraph.lattice(*Ns)
+        signal = np.random.randn(*tuple(reversed(Ns)))
+        signal[np.random.randint(0, 2, tuple(reversed(Ns))).astype(bool)] = np.nan
         gamma = 0.02
 
         Y, S = get_y_and_s(signal)
         filter_function = UnivariateFilterFunction.diffusion(beta=1)
 
+        # calculate the solution explicitly
+        H2 = graph.U.to_array() @ diag(filter_function(vec(graph.lam)) ** 2) @ graph.U.to_array().T
+        explicit_sigma = np.linalg.inv(gamma * np.linalg.inv(H2) + diag(vec(S)))
+        explicit_mean = ten(explicit_sigma @ vec(Y), like=Y)
+
         def test_mean():
-
-
-            # calculate the solution explicitly
-            H2 = graph.U.to_array() @ diag(filter_function(vec(graph.lam)) ** 2) @ graph.U.to_array().T
-            explicit_sigma = np.linalg.inv(gamma * np.linalg.inv(H2) + diag(vec(S)))
-            explicit_mean = ten(explicit_sigma @ vec(Y), like=Y)
 
             # calculate the solution
             reconstructor = MultivariateGraphSignalReconstructor(signal, graph, filter_function, gamma)
@@ -171,8 +220,19 @@ if __name__ == '__main__':
             assert np.allclose(explicit_mean, reconstructor_mean1, atol=1e-5)
             assert np.allclose(explicit_mean, reconstructor_mean2, atol=1e-5)
 
+        def test_omega():
+
+            # calculate the solution
+            reconstructor = MultivariateGraphSignalReconstructor(signal, graph, filter_function, gamma)
+            reconstructor_omega1 = reconstructor.compute_Omega_full(method='sim', tol=1e-8)
+            reconstructor_omega2 = reconstructor.compute_Omega_full(method='cgm', tol=1e-8)
+
+            assert np.allclose(np.log(ten(diag(explicit_sigma), like=signal)), reconstructor_omega1, atol=1e-5)
+            assert np.allclose(np.log(ten(diag(explicit_sigma), like=signal)), reconstructor_omega2, atol=1e-5)
+
 
         test_mean()
+        test_omega()
 
         print('All tests passed')
 

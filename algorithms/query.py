@@ -1,8 +1,8 @@
 import numpy as np
 from numpy import ndarray
+from utils.linalg import ten
 
-
-def select_Q_active(X: ndarray, n: int, seed: int = 0, n_clusters: int = 10):
+def select_Q_active(X: ndarray, n: int, shape: tuple, seed: int = None, n_clusters: int = 10):
     """
     For a data matrix X, containing N length-M feature vectors, of shape (N, M), select the
     n most informative vectors for use in regression. This is done by clustering the feature
@@ -11,8 +11,14 @@ def select_Q_active(X: ndarray, n: int, seed: int = 0, n_clusters: int = 10):
     values indicating which features have been selected.
     """
 
-    np.random.seed(seed)
+    assert n <= X.shape[0]
 
+    if seed is not None:
+        np.random.seed(seed)
+    #
+    # clusterer = KMeans(n_clusters=n_clusters, random_state=seed)
+    # clusterer.fit(X)
+    # predictions = clusterer.predict(X)
 
     predictions = k_means(X, n_clusters=n_clusters)
 
@@ -41,8 +47,7 @@ def select_Q_active(X: ndarray, n: int, seed: int = 0, n_clusters: int = 10):
     out = np.zeros(len(X), dtype=bool)
     out[nqs] = True
 
-    return out
-
+    return ten(out, shape=shape)
 
 
 def k_means(data: ndarray, n_clusters: int=2, max_iter: int=100) -> ndarray:
@@ -88,12 +93,25 @@ def k_means(data: ndarray, n_clusters: int=2, max_iter: int=100) -> ndarray:
             break
 
         else:
-            difference = np.mean(labels != new_labels)
-            print(f'{difference * 100:.4f} labels changed')
             labels = new_labels
             for c in range(n_clusters):
                 centroids[c] = data[labels == c].mean(0)
 
     return labels
+
+
+def select_Q_passive(n: int, shape: tuple, seed: int=None):
+
+    assert n <= np.prod(shape)
+
+    if seed is not None:
+        np.random.seed(seed)
+
+    np.random.seed(seed)
+    N = int(np.prod(shape))
+    Q = np.zeros(N)
+    Q[np.random.choice(N , size=n, replace=False)] = 1
+
+    return ten(Q, shape=shape)
 
 

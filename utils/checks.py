@@ -21,7 +21,7 @@ def check_valid_graph(graph: Union[BaseGraph, ndarray, nx.Graph]) -> BaseGraph:
         return Graph.from_networkx(graph)
 
     else:
-        raise TypeError('argument `graph` should be an ndarray, a Graph or a nx.Graph')
+        raise TypeError(f'argument `graph` should be an ndarray, a Graph or a nx.Graph but it is {type(graph)}')
 
 
 def check_compatible(signal: ndarray = None,

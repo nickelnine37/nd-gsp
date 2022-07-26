@@ -1,8 +1,5 @@
 import numpy as np
 from numpy import ndarray, eye as I, diag
-from typing import Union, Callable
-import networkx as nx
-from scipy.sparse import spmatrix
 
 from algorithms.cgm import solve_SPCGM
 from graph.filters import _FilterFunction, MultivariateFilterFunction, UnivariateFilterFunction
@@ -10,7 +7,7 @@ from graph.graphs import BaseGraph, ProductGraph
 from models.reconstruction.reconstruction_utils import get_y_and_s
 from utils.checks import check_compatible
 from utils.linalg import vec, ten
-from utils.kronecker import KroneckerBlock, KroneckerBlockDiag, KroneckerDiag
+from kronecker.kron_base import KroneckerBlock, KroneckerBlockDiag, KroneckerDiag
 
 from numpy.linalg import eigh, solve
 from scipy.optimize import minimize
@@ -107,7 +104,8 @@ class RNCVarSolver(VarSolver):
                                    reltol=tol,
                                    verbose=verbose)
 
-        print(f'CGM completed in {nits} iterations')
+        if verbose:
+            print(f'CGM completed in {nits} iterations')
 
         self.params = [ten(result[:self.N], like=self.Omega_Q), result[self.N:]]
 
@@ -178,7 +176,7 @@ class LFPVarSolver(VarSolver):
         """
         return ((self.Omega_Q - self.Q * self.Omega(v)) ** 2).sum() + self.lam * ((v - self.x0) ** 2).sum()
 
-    def _get_params(self, verbose=True):
+    def _get_params(self, verbose=False):
 
         self.result = minimize(self.objective, x0=self.x0, bounds=[(None, None), (None, None)] + [(-1, None)] * self.filter_function.ndim + [(None, None)] + [(-1, None)] * self.filter_function.ndim)
 
@@ -187,7 +185,7 @@ class LFPVarSolver(VarSolver):
 
         self.params = [self.result.x]
 
-    def predict(self, verbose=True):
+    def predict(self, verbose=False):
         if self.params is None:
             self._get_params(verbose=verbose)
         return self.Omega(self.params[0])

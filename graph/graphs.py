@@ -7,7 +7,7 @@ from scipy.sparse import spmatrix, csr_array
 from scipy.sparse.csgraph import minimum_spanning_tree
 from scipy.spatial.distance import pdist, squareform
 
-from utils.kronecker import KroneckerSum, KroneckerProduct
+from kronecker.kron_base import KroneckerSum, KroneckerProduct
 from utils.linalg import spdiag
 from utils.gsp import check_valid_adjacency, check_valid_laplacian
 
@@ -151,6 +151,15 @@ class Graph(BaseGraph):
 
         return cls(A=A.astype(float))
 
+    @classmethod
+    def fully_connected(cls, N: int):
+        """
+        Create a fully connected graph with no self-loops
+        """
+
+        A = np.ones((N, N))
+        A[range(N), range(N)] = 0
+        return cls(A=A)
 
     def __init__(self,
                  graph: nx.Graph = None,
@@ -283,6 +292,14 @@ class ProductGraph(BaseGraph):
         Create a lattice graph with Ni ticks in each dimension.
         """
         graphs = [Graph.chain(N) for N in Ns]
+        return cls(*graphs)
+
+    @classmethod
+    def image(cls, like: ndarray):
+        """
+        Create a graph to represent a colour image, given an example image `like`.
+        """
+        graphs = [Graph.fully_connected(3), Graph.chain(like.shape[1]), Graph.chain(like.shape[0])]
         return cls(*graphs)
 
     def _decompose(self):
