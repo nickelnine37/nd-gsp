@@ -1,10 +1,8 @@
-import numpy as np
 from numpy import ndarray
-from kronecker.kron_base import KroneckerOperator
-from kronecker.kron_utils import check_operators_consistent
+import kronecker.kron_base
 
 """
-We use the classes in this file to create composite operators. This is the result of adding or multiplying 
+The classes in this file are used to create composite operators. This is the result of adding or multiplying 
 two simpler operators together. These classes never need to be created explicityly, but are implicitly 
 created whenever two operators are summed or multiplied. 
 
@@ -14,115 +12,158 @@ E.g.
 >>> B = KroneckerSum(B1, B2, B3)
 
 >>> C1 = A + B
->>> assert isinstance(C1, _SumChain)
+>>> assert isinstance(C1, OperatorSum)
 
 >>> C2 = A @ B
->>> assert isinstance(C1, _ProductChain)
+>>> assert isinstance(C1, OperatorProduct)
 
 This abstraction can be used indefinitely to create higher and higher order composite operators. 
 """
 
 
 
-class _SumChain(KroneckerOperator):
+class OperatorSum(kronecker.kron_base.KroneckerOperator):
     """
-    Used to represent a chain of Kronecker objects summed together
+    Used to represent a chain of Kronecker objects summed together. No need for this class to be
+    instatiated by the user. It is used mainly as an internal representation for defining the
+    behaviour of composite operators. The internal state of this operator is simply:
+
+    state = {'A': A, 'B': B}
+
     """
-
-    def __init__(self, *operators):
-        check_operators_consistent(*operators)
-        self.chain = operators
-        self.shape = self.chain[0].shape
-        self.shapes = self.chain[0].shapes
-
-    def __copy__(self):
-        new = _SumChain(*[operator.__copy__() for operator in self.chain])
-        new.factor = self.factor
-        return new
-
-    def __deepcopy__(self, memodict={}):
-        new = _SumChain(*[operator.__deepcopy__() for operator in self.chain])
-        new.factor = self.factor
-        return new
 
     def __pow__(self, power, modulo=None):
         raise NotImplementedError
 
-    def operate(self, other: ndarray) -> ndarray:
-        return self.factor * sum(operator.operate(other) for operator in self.chain)
-
     def inv(self):
         raise NotImplementedError
 
-    @property
-    def T(self):
-        return self.factor * _SumChain(*[operator.T for operator in self.chain])
+    def __init__(self, A: kronecker.kron_base.KroneckerOperator, B: kronecker.kron_base.KroneckerOperator):
+        """
+        Create an OperatorSum: C = A + B
+        """
 
-    def conj(self):
-        return self.factor * _SumChain(*[operator.conj() for operator in self.chain])
-
-    def to_array(self) -> ndarray:
-        return self.factor * sum(operator.to_array() for operator in self.chain)
-
-    # def __repr__(self):
-    #     return 'SumChain({})'.format(', '.join([str(operator) for operator in self.chain]))
-    #
-    # def __str__(self):
-    #     return 'SumChain({})'.format(', '.join([str(operator) for operator in self.chain]))
-
-
-class _ProductChain(KroneckerOperator):
-    """
-    Used to represent a chain of Kronecker objects matrix-multiplied together
-    """
-
-    def __init__(self, *operators):
-        check_operators_consistent(*operators)
-        self.chain = operators
-        self.shape = self.chain[0].shape
-        self.shapes = self.chain[0].shapes
+        kronecker.kron_base.check_operators_consistent(A, B)
+        self.state = {'A': A, 'B': B}
+        self.shape = self.state['A'].shape
 
     def __copy__(self):
-        new = _ProductChain(*[operator.__copy__() for operator in self.chain])
+        new = OperatorSum(self.state['A'].__copy__(), self.state['B'].__copy__())
         new.factor = self.factor
         return new
 
     def __deepcopy__(self, memodict={}):
-        new = _ProductChain(*[operator.__deepcopy__() for operator in self.chain])
+        new = OperatorSum(self.state['A'].__deepcopy__(), self.state['B'].__deepcopy__())
         new.factor = self.factor
         return new
 
     def operate(self, other: ndarray) -> ndarray:
-
-        out = self.chain[-1] @ other
-        for operator in reversed(self.chain[:-1]):
-            out = operator @ out
-
-        return self.factor * out
-
-    def inv(self):
-        return self.factor * _ProductChain(*[operator.inv() for operator in reversed(self.chain)])
+        return self.factor * (self.state['A'].operate(other) + self.state['B'].operate(other))
 
     @property
     def T(self):
-        return self.factor * _ProductChain(*[operator.T for operator in reversed(self.chain)])
+        return self.factor * OperatorSum(self.state['A'].T, self.state['B'].T)
 
     def conj(self):
-        return self.factor * _ProductChain(*[operator.conj() for operator in reversed(self.chain)])
+        return self.factor * OperatorSum(self.state['A'].conj(), self.state['B'].conj())
 
     def to_array(self) -> ndarray:
-        out = self.chain[-1].to_array()
-        for A in reversed(self.chain[:-1]):
-            out = A.to_array() @ out
-        return self.factor * out
+        return self.factor * (self.state['A'].to_array() + self.state['B'].to_array())
 
-    # def __repr__(self):
-    #     return 'ProductChain({})'.format(', '.join([str(operator) for operator in self.chain]))
-    #
-    # def __str__(self):
-    #     return 'ProductChain({})'.format(', '.join([str(operator) for operator in self.chain]))
-
-    def __pow__(self, power, modulo=None):
-        raise NotImplementedError
+    def __repr__(self):
+        return 'OperatorSum({}, {})'.format(self.state['A'].__repr__(), self.state['B'].__repr__())
 
 
+
+class OperatorProduct(kronecker.kron_base.KroneckerOperator):
+    """
+    Used to represent a chain of Kronecker objects matrix-multiplied together. No need for this class to be
+    instatiated by the user. It is used mainly as an internal representation for defining the
+    behaviour of composite operators.
+    """
+
+    def __init__(self, A: kronecker.kron_base.KroneckerOperator, B: kronecker.kron_base.KroneckerOperator):
+        """
+        Create an OperatorProduct: C = A @ B
+        """
+
+        kronecker.kron_base.check_operators_consistent(A, B)
+        self.state = {'A': A, 'B': B}
+        self.shape = self.state['A'].shape
+
+    def __copy__(self):
+        new = OperatorProduct(self.state['A'].__copy__(), self.state['B'].__copy__())
+        new.factor = self.factor
+        return new
+
+    def __deepcopy__(self, memodict={}):
+        new = OperatorProduct(self.state['A'].__deepcopy__(), self.state['B'].__deepcopy__())
+        new.factor = self.factor
+        return new
+
+    def operate(self, other: ndarray) -> ndarray:
+        return self.factor * (self.state['A'] @ (self.state['B'] @ other))
+
+    def inv(self):
+        return (1 / self.factor) * OperatorProduct(self.state['B'].inv(), self.state['A'].inv())
+
+    @property
+    def T(self):
+        return self.factor * OperatorProduct(self.state['B'].T, self.state['A'].T)
+
+    def conj(self):
+        return self.factor * OperatorProduct(self.state['B'].conj(), self.state['A'].conj())
+
+    def to_array(self) -> ndarray:
+        return self.factor * self.state['A'].to_array() @ self.state['B'].to_array()
+
+    def __repr__(self):
+        return 'OperatorProduct({}, {})'.format(self.state['A'].__repr__(), self.state['B'].__repr__())
+
+
+
+def run_tests():
+
+    import numpy as np
+
+    np.set_printoptions(precision=3, linewidth=500, threshold=500, suppress=True, edgeitems=5)
+
+    X, Y, P, kp_literal, ks_literal, kd_literal, kp_optimised, ks_optimised, kd_optimised = kronecker.kron_base.generate_test_data()
+
+    def test_sum():
+
+        literal1 = kp_literal + ks_literal
+        literal2 = kd_literal - ks_literal / 2
+        literal3 = 2.5 * kp_literal + ks_literal / 3 + kd_literal
+
+        optimised1 = kp_optimised + ks_optimised
+        optimised2 = kd_optimised - ks_optimised / 2
+        optimised3 = 2.5 * kp_optimised + ks_optimised / 3 + kd_optimised
+
+        kronecker.kron_base.run_assertions(X, P, literal1, optimised1)
+        kronecker.kron_base.run_assertions(X, P, literal2, optimised2)
+        kronecker.kron_base.run_assertions(X, P, literal3, optimised3)
+
+    def test_product():
+
+        literal1 = kp_literal @ ks_literal
+        literal2 = kd_literal @ ks_literal / 2
+        literal3 = 2.5 * kp_literal @ ks_literal / 3 + kd_literal
+
+        optimised1 = kp_optimised @ ks_optimised
+        optimised2 = kd_optimised @ ks_optimised / 2
+        optimised3 = 2.5 * kp_optimised @ ks_optimised / 3 + kd_optimised
+
+        kronecker.kron_base.run_assertions(X, P, literal1, optimised1)
+        kronecker.kron_base.run_assertions(X, P, literal2, optimised2)
+        kronecker.kron_base.run_assertions(X, P, literal3, optimised3)
+
+    test_sum()
+    test_product()
+
+    print('kron_composite.py: All tests passed')
+
+
+if __name__ == '__main__':
+
+    run_tests()

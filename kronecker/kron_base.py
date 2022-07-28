@@ -2,42 +2,35 @@ import numpy as np
 from numpy import ndarray
 from typing import Union
 
-from utils.linalg import vec, multiply_tensor_product, multiply_tensor_sum, ten, kronecker_product_literal, kronecker_sum_literal, kronecker_diag_literal
 from scipy.sparse import spmatrix
 from numbers import Number
-
-
-"""
-The classes in this file represenent different types of Kronecker-based operators. Their main purpose is to 
-implement __matmul__ in an efficient way, so that we can use the @ syntax without incurring the computational 
-cost of performing literal matrix multiplication. 
-
------- Example -----
-A = SomeKroneckerClass(A1, A2, A3)
-X = randn(N3, N2, N1)
-print(A @ X)
----------------------
-
-These objects are designed to represent valid tensor operators, therefore we restrict ourselves to square 
-matrices. 
+from utils.linalg import kronecker_product_literal, kronecker_sum_literal, kronecker_diag_literal, vec
 
 """
+The class in this file is a base class for all Kronecker operators. Kronecker operators represent large matrices in a
+compact form, and perform all multiplications onto vectors lazily and efficiently. Composite operators can be created
+by treating Kronecker operators as if they are NumPy matrices. All operators support:
 
+    * addition
+    * matrix multiplication
+    * multiplication/division by a scalar
+    * summing along axes 0, 1 or both
+    * transposing/conjugate
 
+using +, @, * .sum() and .T respectively. Some further behaviours for certian operator types are implemented in the subclasses. 
+    
+"""
 
 
 class KroneckerOperator:
     """
-    Base class defining the behaviour of Kronecker-type operators
+    Base class defining the behaviour of Kronecker-type operators. It should not be instantiated directly.
     """
 
     __array_priority__ = 10     # increase priority of class, so it takes precedence when mixing matrix multiplications with ndarrays
     factor: float = 1.0         # a scalar factor multiplying the whole operator
-
-    # subclasses need to give values for the following attributes
     shape: tuple = None         # full (N, N) operator shape
-    shapes: tuple = None        # (N1, N2, ...) individual shapes
-    ndim: int = None            # number of dimensions
+    state = {}                  # contains any other state that the
 
     def __copy__(self) -> 'KroneckerOperator':
         """
@@ -60,10 +53,12 @@ class KroneckerOperator:
         `other` must be an instance of a KroneckerOperator, and not an array or other numeric type.
         """
 
+        from kronecker.kron_composite import OperatorSum
+
         if not isinstance(other, KroneckerOperator):
             raise TypeError('Konecker operators can only be added to other Kronecker operators')
 
-        return _SumChain(self, other)
+        return OperatorSum(self, other)
 
     def __radd__(self, other: 'KroneckerOperator') -> 'KroneckerOperator':
         """
@@ -120,11 +115,13 @@ class KroneckerOperator:
         Overload the matrix multiplication method to use these objects with the @ operator.
         """
 
+        from kronecker.kron_composite import OperatorProduct
+
         if isinstance(other, ndarray):
             return self.operate(other)
 
         elif isinstance(other, KroneckerOperator):
-            return _ProductChain(self, other)
+            return OperatorProduct(self, other)
 
         else:
             raise TypeError('Both objects in the matrix product must be Kronecker Operators')
@@ -257,10 +254,56 @@ class KroneckerOperator:
         return self.__deepcopy__()
 
 
+def check_valid_matrices(*As) -> bool:
 
-def _run_tests(seed: int=1):
+    assert all(isinstance(A, (ndarray, spmatrix)) for A in As)
+    assert all(A.ndim == 2 for A in As)
+    assert all(A.shape[0] == A.shape[1] for A in As)
 
-    np.set_printoptions(precision=3, linewidth=500, threshold=500, suppress=True, edgeitems=5)
+    return True
+
+def check_operators_consistent(A: KroneckerOperator, B: KroneckerOperator) -> bool:
+
+    assert all(isinstance(C, KroneckerOperator) for C in [A, B]), f'All operators in this chain must be consistent, but they have types {type(A)} and {type(B)} respectively'
+    assert A.shape == B.shape, f'All operators in this chain should have the same shape, but they have shapes {A.shape} and {B.shape} respectively'
+
+    return True
+
+
+def check_blocks_consistent(blocks: list):
+    """
+    Check the blocks, which are provided as input to KroneckerBlock and KroneckerBlockDiag are consistent
+    """
+
+    ndim = np.asarray(blocks, dtype='object').ndim
+
+    if ndim == 1:
+        assert all(isinstance(block, (KroneckerOperator, ndarray, spmatrix)) for block in blocks)
+        assert all(block.shape[0] == block.shape[1] for block in blocks)
+
+    elif ndim == 2:
+
+        # check diagonal blocks are square
+        assert all(blocks[i][i].shape[0] == blocks[i][i].shape[1] for i in range(len(blocks)))
+        shapes = [blocks[i][i].shape[0] for i in range(len(blocks))]
+
+        for i in range(len(blocks)):
+            for j in range(len(blocks)):
+                assert isinstance(blocks[i][j], (KroneckerOperator, ndarray, spmatrix))
+                assert blocks[i][j].shape == (shapes[i], shapes[j])
+
+    else:
+        raise ValueError(f'blocks should be 1d or 2d but it is {np.ndim(blocks)}d')
+
+    return True
+
+
+def generate_test_data(seed: int=0):
+    """
+    Generate random data for testing purposes
+    """
+
+    from kronecker.kron_operators import KroneckerProduct, KroneckerDiag, KroneckerSum
 
     np.random.seed(seed)
 
@@ -274,175 +317,248 @@ def _run_tests(seed: int=1):
     A2 = np.random.randn(N2, N2)
     A3 = np.random.randn(N3, N3)
     A4 = np.random.randn(N4, N4)
-
-    Y = np.random.randn(N4, N3, N2, N1)
     D = np.random.randn(N4, N3, N2, N1)
+
+    X = np.random.randn(N4, N3, N2, N1)
+    Y = np.random.randn(N4, N3, N2, N1)
     Q = np.random.randn(N4 * N3 * N2 * N1, K)
 
     # create actual array structures
     kp_literal = kronecker_product_literal(A1, A2, A3, A4)
     ks_literal = kronecker_sum_literal(A1, A2, A3, A4)
     kd_literal = kronecker_diag_literal(D)
-    kb_literal = np.block([[kp_literal, kd_literal], [np.zeros(kp_literal.shape), ks_literal]])
-    kbd_literal = np.block([[kp_literal, np.zeros(kp_literal.shape)], [np.zeros(kp_literal.shape), ks_literal]])
 
-    # create lazy computation equivelants
     kp_optimised = KroneckerProduct(A1, A2, A3, A4)
     ks_optimised = KroneckerSum(A1, A2, A3, A4)
     kd_optimised = KroneckerDiag(D)
-    kb_optimised = KroneckerBlock([[kp_optimised, kd_optimised], [np.zeros(kp_literal.shape), ks_optimised]])
-    kbd_optimised = KroneckerBlockDiag([kp_optimised, ks_optimised])
+
+    # print('kp_optimised', kp_optimised.to_array())
+    # print('ks_optimised', ks_optimised.to_array())
+
+    return X, Y, Q, kp_literal, ks_literal, kd_literal, kp_optimised, ks_optimised, kd_optimised
 
 
-    def run_regular_assertions(literal: ndarray, optimised: KroneckerOperator):
+def run_assertions(X: ndarray, P: ndarray, literal: ndarray, optimised: KroneckerOperator):
+    """
+    Assert that the ndarray `literal` and the KroneckerOperator`optimised` behave in the exact same
+    way when applied to the tensor X, and matrix of vectors P.
+    """
 
-        X = np.random.randn(N4, N3, N2, N1)
-        P = np.random.randn(N4 * N3 * N2 * N1, K)
+    # print('literal2', literal)
+    # print('optimised2', optimised.to_array())
 
-        # test with @ operator
-        assert np.allclose(literal @ vec(X), optimised @ vec(X))                      # test forward matrix multiplication
-        assert np.allclose(vec(X) @ literal, vec(X) @ optimised)                      # test backward matrix multiplication
-        assert np.isclose(vec(X) @ literal @ vec(X), vec(X) @ optimised @ vec(X))     # test quadratic form
+    # test literal conversion
+    assert np.allclose(literal, optimised.to_array())
 
-        # test with np.matmul
-        assert np.allclose(np.matmul(literal, vec(X)), np.matmul(optimised, vec(X)))
-        assert np.allclose(np.matmul(vec(X), literal), np.matmul(vec(X), optimised))
-        assert np.isclose(np.matmul(vec(X), np.matmul(literal, vec(X))), np.matmul(vec(X), np.matmul(optimised, vec(X))))
+    # test with @ operator
+    assert np.allclose(literal @ vec(X), optimised @ vec(X))                      # test forward matrix multiplication
+    assert np.allclose(vec(X) @ literal, vec(X) @ optimised)                      # test backward matrix multiplication
+    assert np.isclose(vec(X) @ literal @ vec(X), vec(X) @ optimised @ vec(X))     # test quadratic form
 
-        # test summing operation
-        assert np.allclose(literal.sum(0), optimised.sum(0))
-        assert np.allclose(literal.sum(1), optimised.sum(1))
-        assert np.isclose(literal.sum(), optimised.sum())
+    # # test with np.matmul
+    # assert np.allclose(np.matmul(literal, vec(X)), np.matmul(optimised, vec(X)))
+    # assert np.allclose(np.matmul(vec(X), literal), np.matmul(vec(X), optimised))
+    # assert np.isclose(np.matmul(vec(X), np.matmul(literal, vec(X))), np.matmul(vec(X), np.matmul(optimised, vec(X))))
 
-        # test literal conversion
-        assert np.allclose(literal, optimised.to_array())
+    # test multiplication onto a data matrix
+    assert np.allclose(literal @ P, optimised @ P)
+    assert np.allclose(P.T @ literal, P.T @ optimised)
+    assert np.allclose(P.T @ literal @ P, P.T @ optimised @ P)
 
-        # test multiplication onto a data matrix
-        assert np.allclose(literal @ P, optimised @ P)
-        assert np.allclose(P.T @ literal, P.T @ optimised)
-        assert np.allclose(P.T @ literal @ P, P.T @ optimised @ P)
-
-    def run_block_assertions(literal: ndarray, optimised: Union[KroneckerBlock, KroneckerBlockDiag]):
-
-        X1 = np.random.randn(N4 * N3 * N2 * N1 * 2)
-        P = np.random.randn(N4 * N3 * N2 * N1 * 2, K)
-
-        # test with @ operator
-        assert np.allclose(literal @ X1, optimised @ X1)
-        assert np.allclose(X1 @ literal, X1 @ optimised)
-        assert np.isclose(X1 @ literal @ X1, X1 @ optimised @ X1)
-
-        assert np.allclose(literal, optimised.to_array())
-
-        # test multiplication onto a data matrix
-        assert np.allclose(literal @ P, optimised @ P)
-        assert np.allclose(P.T @ literal, P.T @ optimised)
-        assert np.allclose(P.T @ literal @ P, P.T @ optimised @ P)
+    # test summing operation
+    assert np.allclose(literal.sum(0), optimised.sum(0))
+    assert np.allclose(literal.sum(1), optimised.sum(1))
+    assert np.isclose(literal.sum(), optimised.sum())
 
 
-    def test_kronecker_product():
-        run_regular_assertions(kp_literal, kp_optimised)
-
-    def test_kronecker_sum():
-        run_regular_assertions(ks_literal, ks_optimised)
-
-    def test_kronecker_diag():
-        run_regular_assertions(kd_literal, kd_optimised)
-
-    def test_kronecker_block():
-
-        run_block_assertions(kb_literal, kb_optimised)
-        run_block_assertions(kb_literal.T, kb_optimised.T)
-        run_block_assertions(kbd_literal, kbd_optimised)
-        run_block_assertions(kbd_literal.T, kbd_optimised.T)
 
 
-    def test_product_chain():
-
-        literal = ks_literal @  kd_literal @ kp_literal
-        optimised = _ProductChain(ks_optimised, kd_optimised, kp_optimised)
-        run_regular_assertions(literal, optimised)
-
-    def test_sum_chain():
-
-        literal = ks_literal + kd_literal + kp_literal
-        optimised = _SumChain(ks_optimised, kd_optimised, kp_optimised)
-        run_regular_assertions(literal, optimised)
-
-    def test_operator_multiplcation():
-
-        literal = ks_literal @ kd_literal @ kp_literal
-        optimised = ks_optimised @ kd_optimised @ kp_optimised
-        run_regular_assertions(literal, optimised)
-
-    def test_operator_addition():
-
-        literal = ks_literal + kd_literal + kp_literal
-        optimised = ks_optimised + kd_optimised + kp_optimised
-        run_regular_assertions(literal, optimised)
-
-    def test_operator_subtraction():
-
-        literal = kd_literal - kp_literal
-        optimised = kd_optimised - kp_optimised
-        run_regular_assertions(literal, optimised)
-
-    def test_operator_scaling():
-
-        literal = 2 * ks_literal + kd_literal / 5 - (13 / 11) * kp_literal
-        optimised = 2 * ks_optimised + kd_optimised / 5 - (13 / 11) * kp_optimised
-        run_regular_assertions(literal, optimised)
-
-    def test_kronecker_hadamard():
-
-        literal = 2 * kp_literal * 4 * kp_literal.T
-        optimised = 2 * kp_optimised * 4 * kp_optimised.T
-        run_regular_assertions(literal, optimised)
-
-    def test_kronecker_pow():
-
-        literal = kp_literal ** 2 + kd_literal ** 3
-        optimised = kp_optimised ** 2 + kd_optimised ** 3
-        run_regular_assertions(literal, optimised)
-
-    def test_assorted_expressions():
-
-        literal1 = (2 * kp_literal.T - ks_literal) @ kp_literal / 2.2
-        literal2 =  -5 * kd_literal @ ks_literal.T + kp_literal @ kp_literal.T
-        literal3 = -kp_literal.T @ ks_literal @ kp_literal
-        literal4 = (kp_literal - ks_literal @  kd_literal).T @ ks_literal
-        literal5 = (kp_literal * kp_literal.T) @  kp_literal.T
-
-        optimised1 = (2 * kp_optimised.T - ks_optimised) @ kp_optimised / 2.2
-        optimised2 =  -5 * kd_optimised @ ks_optimised.T + kp_optimised @ kp_optimised.T
-        optimised3 = -kp_optimised.T @ ks_optimised @ kp_optimised
-        optimised4 = (kp_optimised - ks_optimised @   kd_optimised).T @ ks_optimised
-        optimised5 = (kp_optimised * kp_optimised.T) @  kp_optimised.T
-
-        run_regular_assertions(literal1, optimised1)
-        run_regular_assertions(literal2, optimised2)
-        run_regular_assertions(literal3, optimised3)
-        run_regular_assertions(literal4, optimised4)
-        run_regular_assertions(literal5, optimised5)
-
-    test_kronecker_product()
-    test_kronecker_sum()
-    test_kronecker_diag()
-    test_kronecker_block()
-    test_product_chain()
-    test_sum_chain()
-    test_operator_multiplcation()
-    test_operator_addition()
-    test_operator_subtraction()
-    test_operator_scaling()
-    test_kronecker_hadamard()
-    test_kronecker_pow()
-    test_assorted_expressions()
-
-    print('All tests passed')
-
-
-if __name__ == '__main__':
-
-    _run_tests(seed=0)
-
+#
+# def _run_tests(seed: int=1):
+#
+#     np.set_printoptions(precision=3, linewidth=500, threshold=500, suppress=True, edgeitems=5)
+#
+#     np.random.seed(seed)
+#
+#     N1 = 6
+#     N2 = 5
+#     N3 = 4
+#     N4 = 3
+#     K = 5
+#
+#     A1 = np.random.randn(N1, N1)
+#     A2 = np.random.randn(N2, N2)
+#     A3 = np.random.randn(N3, N3)
+#     A4 = np.random.randn(N4, N4)
+#
+#     Y = np.random.randn(N4, N3, N2, N1)
+#     D = np.random.randn(N4, N3, N2, N1)
+#     Q = np.random.randn(N4 * N3 * N2 * N1, K)
+#
+#     # create actual array structures
+#     kp_literal = kronecker_product_literal(A1, A2, A3, A4)
+#     ks_literal = kronecker_sum_literal(A1, A2, A3, A4)
+#     kd_literal = kronecker_diag_literal(D)
+#     kb_literal = np.block([[kp_literal, kd_literal], [np.zeros(kp_literal.shape), ks_literal]])
+#     kbd_literal = np.block([[kp_literal, np.zeros(kp_literal.shape)], [np.zeros(kp_literal.shape), ks_literal]])
+#
+#     # create lazy computation equivelants
+#     kp_optimised = KroneckerProduct(A1, A2, A3, A4)
+#     ks_optimised = KroneckerSum(A1, A2, A3, A4)
+#     kd_optimised = KroneckerDiag(D)
+#     kb_optimised = KroneckerBlock([[kp_optimised, kd_optimised], [np.zeros(kp_literal.shape), ks_optimised]])
+#     kbd_optimised = KroneckerBlockDiag([kp_optimised, ks_optimised])
+#
+#
+#     def run_regular_assertions(literal: ndarray, optimised: KroneckerOperator):
+#
+#         X = np.random.randn(N4, N3, N2, N1)
+#         P = np.random.randn(N4 * N3 * N2 * N1, K)
+#
+#         # test with @ operator
+#         assert np.allclose(literal @ vec(X), optimised @ vec(X))                      # test forward matrix multiplication
+#         assert np.allclose(vec(X) @ literal, vec(X) @ optimised)                      # test backward matrix multiplication
+#         assert np.isclose(vec(X) @ literal @ vec(X), vec(X) @ optimised @ vec(X))     # test quadratic form
+#
+#         # test with np.matmul
+#         assert np.allclose(np.matmul(literal, vec(X)), np.matmul(optimised, vec(X)))
+#         assert np.allclose(np.matmul(vec(X), literal), np.matmul(vec(X), optimised))
+#         assert np.isclose(np.matmul(vec(X), np.matmul(literal, vec(X))), np.matmul(vec(X), np.matmul(optimised, vec(X))))
+#
+#         # test summing operation
+#         assert np.allclose(literal.sum(0), optimised.sum(0))
+#         assert np.allclose(literal.sum(1), optimised.sum(1))
+#         assert np.isclose(literal.sum(), optimised.sum())
+#
+#         # test literal conversion
+#         assert np.allclose(literal, optimised.to_array())
+#
+#         # test multiplication onto a data matrix
+#         assert np.allclose(literal @ P, optimised @ P)
+#         assert np.allclose(P.T @ literal, P.T @ optimised)
+#         assert np.allclose(P.T @ literal @ P, P.T @ optimised @ P)
+#
+#     def run_block_assertions(literal: ndarray, optimised: Union[KroneckerBlock, KroneckerBlockDiag]):
+#
+#         X1 = np.random.randn(N4 * N3 * N2 * N1 * 2)
+#         P = np.random.randn(N4 * N3 * N2 * N1 * 2, K)
+#
+#         # test with @ operator
+#         assert np.allclose(literal @ X1, optimised @ X1)
+#         assert np.allclose(X1 @ literal, X1 @ optimised)
+#         assert np.isclose(X1 @ literal @ X1, X1 @ optimised @ X1)
+#
+#         assert np.allclose(literal, optimised.to_array())
+#
+#         # test multiplication onto a data matrix
+#         assert np.allclose(literal @ P, optimised @ P)
+#         assert np.allclose(P.T @ literal, P.T @ optimised)
+#         assert np.allclose(P.T @ literal @ P, P.T @ optimised @ P)
+#
+#
+#     def test_kronecker_product():
+#         run_regular_assertions(kp_literal, kp_optimised)
+#
+#     def test_kronecker_sum():
+#         run_regular_assertions(ks_literal, ks_optimised)
+#
+#     def test_kronecker_diag():
+#         run_regular_assertions(kd_literal, kd_optimised)
+#
+#     def test_kronecker_block():
+#
+#         run_block_assertions(kb_literal, kb_optimised)
+#         run_block_assertions(kb_literal.T, kb_optimised.T)
+#         run_block_assertions(kbd_literal, kbd_optimised)
+#         run_block_assertions(kbd_literal.T, kbd_optimised.T)
+#
+#
+#     def test_product_chain():
+#
+#         literal = ks_literal @  kd_literal @ kp_literal
+#         optimised = OperatorProduct(ks_optimised, kd_optimised, kp_optimised)
+#         run_regular_assertions(literal, optimised)
+#
+#     def test_sum_chain():
+#
+#         literal = ks_literal + kd_literal + kp_literal
+#         optimised = OperatorSum(ks_optimised, kd_optimised, kp_optimised)
+#         run_regular_assertions(literal, optimised)
+#
+#     def test_operator_multiplcation():
+#
+#         literal = ks_literal @ kd_literal @ kp_literal
+#         optimised = ks_optimised @ kd_optimised @ kp_optimised
+#         run_regular_assertions(literal, optimised)
+#
+#     def test_operator_addition():
+#
+#         literal = ks_literal + kd_literal + kp_literal
+#         optimised = ks_optimised + kd_optimised + kp_optimised
+#         run_regular_assertions(literal, optimised)
+#
+#     def test_operator_subtraction():
+#
+#         literal = kd_literal - kp_literal
+#         optimised = kd_optimised - kp_optimised
+#         run_regular_assertions(literal, optimised)
+#
+#     def test_operator_scaling():
+#
+#         literal = 2 * ks_literal + kd_literal / 5 - (13 / 11) * kp_literal
+#         optimised = 2 * ks_optimised + kd_optimised / 5 - (13 / 11) * kp_optimised
+#         run_regular_assertions(literal, optimised)
+#
+#     def test_kronecker_hadamard():
+#
+#         literal = 2 * kp_literal * 4 * kp_literal.T
+#         optimised = 2 * kp_optimised * 4 * kp_optimised.T
+#         run_regular_assertions(literal, optimised)
+#
+#     def test_kronecker_pow():
+#
+#         literal = kp_literal ** 2 + kd_literal ** 3
+#         optimised = kp_optimised ** 2 + kd_optimised ** 3
+#         run_regular_assertions(literal, optimised)
+#
+#     def test_assorted_expressions():
+#
+#         literal1 = (2 * kp_literal.T - ks_literal) @ kp_literal / 2.2
+#         literal2 =  -5 * kd_literal @ ks_literal.T + kp_literal @ kp_literal.T
+#         literal3 = -kp_literal.T @ ks_literal @ kp_literal
+#         literal4 = (kp_literal - ks_literal @  kd_literal).T @ ks_literal
+#         literal5 = (kp_literal * kp_literal.T) @  kp_literal.T
+#
+#         optimised1 = (2 * kp_optimised.T - ks_optimised) @ kp_optimised / 2.2
+#         optimised2 =  -5 * kd_optimised @ ks_optimised.T + kp_optimised @ kp_optimised.T
+#         optimised3 = -kp_optimised.T @ ks_optimised @ kp_optimised
+#         optimised4 = (kp_optimised - ks_optimised @   kd_optimised).T @ ks_optimised
+#         optimised5 = (kp_optimised * kp_optimised.T) @  kp_optimised.T
+#
+#         run_regular_assertions(literal1, optimised1)
+#         run_regular_assertions(literal2, optimised2)
+#         run_regular_assertions(literal3, optimised3)
+#         run_regular_assertions(literal4, optimised4)
+#         run_regular_assertions(literal5, optimised5)
+#
+#     test_kronecker_product()
+#     test_kronecker_sum()
+#     test_kronecker_diag()
+#     test_kronecker_block()
+#     test_product_chain()
+#     test_sum_chain()
+#     test_operator_multiplcation()
+#     test_operator_addition()
+#     test_operator_subtraction()
+#     test_operator_scaling()
+#     test_kronecker_hadamard()
+#     test_kronecker_pow()
+#     test_assorted_expressions()
+#
+#     print('All tests passed')
+#
+#
+# if __name__ == '__main__':
+#
+#     _run_tests(seed=0)
+#
