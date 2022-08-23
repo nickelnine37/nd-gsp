@@ -7,7 +7,7 @@ from graph.graphs import BaseGraph, ProductGraph
 from models.reconstruction.reconstruction_utils import get_y_and_s
 from utils.checks import check_compatible
 from utils.linalg import vec, ten
-from kronecker.kron_base import KroneckerBlock, KroneckerBlockDiag, KroneckerDiag
+from pykronecker import KroneckerDiag
 
 from numpy.linalg import eigh, solve
 from scipy.optimize import minimize

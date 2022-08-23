@@ -7,7 +7,7 @@ from scipy.sparse import spmatrix, csr_array
 from scipy.sparse.csgraph import minimum_spanning_tree
 from scipy.spatial.distance import pdist, squareform
 
-from kronecker.kron_base import KroneckerSum, KroneckerProduct
+from pykronecker import KroneckerSum, KroneckerProduct
 from utils.linalg import spdiag
 from utils.gsp import check_valid_adjacency, check_valid_laplacian
 

@@ -5,7 +5,7 @@ from graph.graphs import BaseGraph, ProductGraph
 from graph.filters import _FilterFunction, UnivariateFilterFunction, MultivariateFilterFunction
 from models.reconstruction.reconstruction_utils import get_y_and_s
 from utils.checks import check_valid_graph, check_compatible
-from kronecker.kron_base import KroneckerDiag
+from pykronecker import KroneckerDiag
 from utils.linalg import vec, ten
 from models.reconstruction.var_estimators import RRVarSolver, LFPVarSolver, RNCVarSolver
 
@@ -33,11 +33,7 @@ class MultivariateGraphSignalReconstructor:
         # check the signal, graph and filter_function are all mutually compatible
         check_compatible(signal=self.Y, graph=self.graph, filter_function=self.filter_function)
 
-        if isinstance(self.filter_function, MultivariateFilterFunction):
-            self.G = self.filter_function(self.graph.lams)
-
-        else:
-            self.G = self.filter_function(self.graph.lam)
+        self.reset_G()
 
         n_neighbours = graph.A.sum(0)
 
@@ -49,6 +45,14 @@ class MultivariateGraphSignalReconstructor:
                       n_neighbours,
                       graph.U @ KroneckerDiag(self.G) @ graph.U.T @ n_neighbours
                       ]).T
+
+    def reset_G(self):
+
+        if isinstance(self.filter_function, MultivariateFilterFunction):
+            self.G = self.filter_function(self.graph.lams)
+
+        else:
+            self.G = self.filter_function(self.graph.lam)
 
     def set_gamma(self, gamma: float) -> 'MultivariateGraphSignalReconstructor':
         """
@@ -62,6 +66,7 @@ class MultivariateGraphSignalReconstructor:
         Set the beta parameter for the filter function. Recompute g2, H2 and M.
         """
         self.filter_function.set_beta(beta)
+        self.reset_G()
         return self
 
     def _compute_cgm(self, Y: ndarray, tol: float=1e-5,  verbose: bool=True) -> tuple[ndarray, int]:
@@ -224,8 +229,8 @@ if __name__ == '__main__':
 
             # calculate the solution
             reconstructor = MultivariateGraphSignalReconstructor(signal, graph, filter_function, gamma)
-            reconstructor_omega1 = reconstructor.compute_Omega_full(method='sim', tol=1e-8)
-            reconstructor_omega2 = reconstructor.compute_Omega_full(method='cgm', tol=1e-8)
+            reconstructor_omega1 = reconstructor.compute_logvar_full(method='sim', tol=1e-8)
+            reconstructor_omega2 = reconstructor.compute_logvar_full(method='cgm', tol=1e-8)
 
             assert np.allclose(np.log(ten(diag(explicit_sigma), like=signal)), reconstructor_omega1, atol=1e-5)
             assert np.allclose(np.log(ten(diag(explicit_sigma), like=signal)), reconstructor_omega2, atol=1e-5)

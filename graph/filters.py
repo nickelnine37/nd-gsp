@@ -140,24 +140,24 @@ class MultivariateFilterFunction(_FilterFunction):
 
     """
 
-    def __init__(self, filter: Callable, beta: ndarray):
-        super().__init__(filter, beta)
+    def __init__(self, filter: Callable, beta: ndarray | list):
+        super().__init__(filter, np.asarray(beta))
         self.ndim = len(beta)
 
     @classmethod
-    def random_walk(cls, beta: ndarray):
+    def random_walk(cls, beta: ndarray | list):
         return cls(lambda Lams, betas_: (1 + sum(beta * Lam for beta, Lam in zip(betas_, Lams))) ** -1, beta)
 
     @classmethod
-    def diffusion(cls, beta: ndarray):
+    def diffusion(cls, beta: ndarray | list):
         return cls(lambda Lams, betas_: exp(- sum(beta * Lam for beta, Lam in zip(betas_, Lams))), beta)
 
     @classmethod
-    def ReLu(cls, beta: ndarray):
+    def ReLu(cls, beta: ndarray | list):
         return cls(lambda Lams, betas_: np.maximum(1 - sum(beta * Lam for beta, Lam in zip(betas_, Lams)), 0), beta)
 
     @classmethod
-    def sigmoid(cls, beta: ndarray):
+    def sigmoid(cls, beta: ndarray | list):
         def fil(Lams, betas_):
             E = exp(-sum(beta * Lam for beta, Lam in zip(betas_, Lams)))
             return 2 * E * (1 + E) ** -1
@@ -165,12 +165,12 @@ class MultivariateFilterFunction(_FilterFunction):
         return cls(fil, beta)
 
     @classmethod
-    def bandlimited(cls, beta: ndarray):
+    def bandlimited(cls, beta: ndarray | list):
         return cls(lambda Lams, betas_: np.all([beta * Lam < 1 for beta, Lam in zip(betas_, Lams)], axis=0).astype(float), beta)
 
-    def set_beta(self, beta: ndarray):
+    def set_beta(self, beta: ndarray | list):
         assert len(beta) == self.ndim, f'beta should be length {self.ndim} but it is length {len(beta)}'
-        self.beta = beta
+        self.beta = np.asarray(beta)
 
     def __call__(self, Lams: ndarray | list):
         assert len(Lams) == self.ndim, f'Lams should be length {self.ndim} but it is length {len(Lams)}'
