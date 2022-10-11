@@ -1,0 +1,10 @@
+[build-system]
+requires = ["setuptools>42.00", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+addopts = "--cov=ndgsp --cov-report=html --cov-config=.coveragerc"
+testpaths = [
+    "tests",
+]
+

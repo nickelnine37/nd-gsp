@@ -1,9 +1,11 @@
+from abc import ABC, abstractmethod
+
 from numpy import ndarray, exp
 import numpy as np
-from typing import Callable, Union
+from typing import Callable, Union, Iterable
 
 
-class _FilterFunction:
+class FilterFunction(ABC):
     """
     Abstract base class for a graph filter function object. Should not be used directly. Use one of
 
@@ -17,39 +19,45 @@ class _FilterFunction:
     beta: float | ndarray = None
     ndim: int = None
     
-    def __init__(self, filter: Callable, beta: float | ndarray):
+    def __init__(self, filter: Callable, beta: float | Iterable):
         self.filter = filter
         self.beta = beta
 
-
     @classmethod
-    def random_walk(cls, beta: float | ndarray) -> '_FilterFunction':
-        raise NotImplementedError
-
-    @classmethod
-    def diffusion(cls, beta: float | ndarray) -> '_FilterFunction':
+    @abstractmethod
+    def random_walk(cls, beta: float | Iterable) -> 'FilterFunction':
         raise NotImplementedError
 
     @classmethod
-    def ReLu(cls, beta: float | ndarray) -> '_FilterFunction':
+    @abstractmethod
+    def diffusion(cls, beta: float | Iterable) -> 'FilterFunction':
         raise NotImplementedError
 
     @classmethod
-    def sigmoid(cls, beta: float | ndarray) -> '_FilterFunction':
+    @abstractmethod
+    def ReLu(cls, beta: float | Iterable) -> 'FilterFunction':
         raise NotImplementedError
 
     @classmethod
-    def bandlimited(cls, beta: float | ndarray) -> '_FilterFunction':
+    @abstractmethod
+    def sigmoid(cls, beta: float | Iterable) -> 'FilterFunction':
         raise NotImplementedError
 
-    def set_beta(self, beta: float | ndarray) -> '_FilterFunction':
+    @classmethod
+    @abstractmethod
+    def bandlimited(cls, beta: float | Iterable) -> 'FilterFunction':
         raise NotImplementedError
 
-    def __call__(self, Lams: float | ndarray | list) -> float | ndarray:
+    @abstractmethod
+    def set_beta(self, beta: float | Iterable) -> 'FilterFunction':
+        raise NotImplementedError
+
+    @abstractmethod
+    def __call__(self, Lams: float | Iterable) -> float | ndarray:
         raise NotImplementedError
 
 
-class UnivariateFilterFunction(_FilterFunction):
+class UnivariateFilterFunction(FilterFunction):
     """
     Class to represent a simple graph filter. Initialise with one of the constructors:
 
@@ -120,7 +128,7 @@ class UnivariateFilterFunction(_FilterFunction):
         return self.filter(lam, self.beta)
 
 
-class MultivariateFilterFunction(_FilterFunction):
+class MultivariateFilterFunction(FilterFunction):
     """
     This slightly more complex filter type can handle different parameters in
     different dimensions. We have  list of parameters, betas, and a list of
@@ -140,24 +148,24 @@ class MultivariateFilterFunction(_FilterFunction):
 
     """
 
-    def __init__(self, filter: Callable, beta: ndarray | list):
+    def __init__(self, filter: Callable, beta: Iterable):
         super().__init__(filter, np.asarray(beta))
         self.ndim = len(beta)
 
     @classmethod
-    def random_walk(cls, beta: ndarray | list):
+    def random_walk(cls, beta: Iterable):
         return cls(lambda Lams, betas_: (1 + sum(beta * Lam for beta, Lam in zip(betas_, Lams))) ** -1, beta)
 
     @classmethod
-    def diffusion(cls, beta: ndarray | list):
+    def diffusion(cls, beta: Iterable):
         return cls(lambda Lams, betas_: exp(- sum(beta * Lam for beta, Lam in zip(betas_, Lams))), beta)
 
     @classmethod
-    def ReLu(cls, beta: ndarray | list):
+    def ReLu(cls, beta: Iterable):
         return cls(lambda Lams, betas_: np.maximum(1 - sum(beta * Lam for beta, Lam in zip(betas_, Lams)), 0), beta)
 
     @classmethod
-    def sigmoid(cls, beta: ndarray | list):
+    def sigmoid(cls, beta: Iterable):
         def fil(Lams, betas_):
             E = exp(-sum(beta * Lam for beta, Lam in zip(betas_, Lams)))
             return 2 * E * (1 + E) ** -1
@@ -165,13 +173,13 @@ class MultivariateFilterFunction(_FilterFunction):
         return cls(fil, beta)
 
     @classmethod
-    def bandlimited(cls, beta: ndarray | list):
+    def bandlimited(cls, beta: Iterable):
         return cls(lambda Lams, betas_: np.all([beta * Lam < 1 for beta, Lam in zip(betas_, Lams)], axis=0).astype(float), beta)
 
-    def set_beta(self, beta: ndarray | list):
+    def set_beta(self, beta: Iterable):
         assert len(beta) == self.ndim, f'beta should be length {self.ndim} but it is length {len(beta)}'
         self.beta = np.asarray(beta)
 
-    def __call__(self, Lams: ndarray | list):
+    def __call__(self, Lams: Iterable):
         assert len(Lams) == self.ndim, f'Lams should be length {self.ndim} but it is length {len(Lams)}'
         return self.filter(Lams, self.beta)
