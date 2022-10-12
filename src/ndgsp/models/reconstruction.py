@@ -55,7 +55,8 @@ class GSR(Model):
 
         DG = KroneckerDiag(self.graph.get_G(self.filter_func))
         DS = KroneckerDiag(self.S)
-        I = KroneckerDiag(jnp.ones_like(self.S))
+        Y_ = DG @ self.graph.U.T @ self.Y
+        Q = DG @ self.graph.U.T @ DS @ self.graph.U @ DG + self.gamma * KroneckerDiag(jnp.ones_like(self.S))
 
         samples = []
 
@@ -63,12 +64,7 @@ class GSR(Model):
 
             Z1_ = DG @ self.graph.U.T @ DS @ np.random.normal(size=self.Y.shape)
             Z2_ = self.gamma ** 0.5 * np.random.normal(size=self.Y.shape)
-            Z_ = Z1_ + Z2_
-
-            Y_ = DG @ self.graph.U.T @ self.Y
-            Q = DG @ self.graph.U.T @ DS @ self.graph.U @ DG + self.gamma * I
-            z = solve_CMG(Q, Z_ + Y_)
-
+            z = solve_CMG(Q, Z1_ + Z2_ + Y_)
             samples.append(self.graph.U @ DG @ z)
 
         if n_samples == 1:
@@ -76,8 +72,6 @@ class GSR(Model):
 
         else:
             return samples
-
-
 
 
 class LogisticGSR(Model):
@@ -94,30 +88,61 @@ class LogisticGSR(Model):
         self.gamma = gamma
         self.filter_func = filter_func
 
-    def compute_mean(self):
+    @staticmethod
+    @jit
+    def get_mu(alpha: Array):
+        return (1 + jnp.exp(-alpha)) ** -1
+
+    def _compute_alpha_star(self):
 
         DG = KroneckerDiag(self.graph.get_G(self.filter_func))
         DS = KroneckerDiag(self.S)
-
-        @jit
-        def get_mu_(alpha_: Array):
-            return (1 + jnp.exp(-self.graph.U @ DG @ alpha_)) ** -1
+        I = KroneckerIdentity(like=self.graph.U)
 
         alpha_ = np.zeros_like(self.Y)
-
-        da = 100
+        da = 1
 
         while da > 1e-5:
-
-            mu_ = get_mu_(alpha_)
-            Dmu_ = KroneckerDiag(mu_ * (1 - mu_))
-            H = DG @ self.graph.U.T @ DS @ Dmu_ @ DS @ self.graph.U @ DG + KroneckerIdentity(like=self.graph.U)
-            x = DG @ self.graph.U.T @ DS @ (Dmu_ @ DS @ self.graph.U @ DG @ alpha_ + self.Y - mu_)
+            mu = self.get_mu(self.graph.U @ DG @ alpha_)
+            Dmu_ = KroneckerDiag(mu * (1 - mu))
+            H = DG @ self.graph.U.T @ DS @ Dmu_ @ DS @ self.graph.U @ DG + self.gamma * I
+            x = DG @ self.graph.U.T @ DS @ (Dmu_ @ DS @ self.graph.U @ DG @ alpha_ + self.Y - mu)
             alpha_new = solve_CMG(H, x)
             da = np.abs(alpha_ - alpha_new).sum() / np.prod(alpha_.shape)
             alpha_ = alpha_new
 
-        return get_mu_(alpha_)
+        return alpha_
+
+    def compute_mean(self):
+        DG = KroneckerDiag(self.graph.get_G(self.filter_func))
+        return self.get_mu(self.graph.U @ DG @ self._compute_alpha_star())
+
+    def sample(self, n_samples: int=1):
+
+        DG = KroneckerDiag(self.graph.get_G(self.filter_func))
+        DS = KroneckerDiag(self.S)
+        alpha_star = self._compute_alpha_star()
+
+        mu = self.get_mu(self.graph.U @ DG @ alpha_star)
+        Dmu_ = KroneckerDiag(mu * (1 - mu))
+        Dmu_chol = Dmu_ ** 0.5
+
+        H = DG @ self.graph.U.T @ DS @ Dmu_ @ DS @ self.graph.U @ DG + self.gamma * KroneckerIdentity(like=self.graph.U)
+
+        samples = []
+
+        for _ in range(n_samples):
+
+            Z1_ = DG @ self.graph.U.T @ DS @ Dmu_chol @ np.random.normal(size=self.Y.shape)
+            Z2_ = self.gamma ** 0.5 * np.random.normal(size=self.Y.shape)
+            alpha_sample = alpha_star + solve_CMG(H, Z1_ + Z2_)
+            samples.append(self.get_mu(self.graph.U @ DG @ alpha_sample))
+
+        if n_samples == 1:
+            return samples[0]
+
+        else:
+            return samples
 
 
 if __name__ == '__main__':
