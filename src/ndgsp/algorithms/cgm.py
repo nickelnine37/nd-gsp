@@ -10,9 +10,8 @@ from ndgsp.utils.types import Operator, Array
 
 def solve_SPCGM(A_precon: Operator,
                 y: Array,
-                x0: Array= None,
-                Phi: Operator = None,
-                PhiT: Operator = None,
+                Phi: Operator,
+                x0: Array = None,
                 max_iter=20000,
                 reltol=1e-8,
                 verbose=False
@@ -26,8 +25,8 @@ def solve_SPCGM(A_precon: Operator,
     Parameters
     ----------
     A_precon        The preconditioned coefficient matrix, (Φ.T A Φ)
+    y               The vector to solve against
     Phi             The right symmetric preconditioner Φ
-    PhiT            The left symmetric preconditioner Φ.T
 
     other arguments are as in solve_CMG
 
@@ -36,10 +35,10 @@ def solve_SPCGM(A_precon: Operator,
     x               The result of solving the linear system
     """
 
-    return Phi @ solve_CMG(A=A_precon, y=PhiT @ y, x0=x0, max_iter=max_iter, reltol=reltol, verbose=verbose)
+    return Phi @ solve_CGM(A=A_precon, y=Phi.T @ y, x0=x0, max_iter=max_iter, reltol=reltol, verbose=verbose)
 
 
-def solve_CMG(A: Operator,
+def solve_CGM(A: Operator,
               y: Array,
               x0: Array = None,
               max_iter=20000,
