@@ -239,6 +239,30 @@ class Graph(BaseGraph):
         A = np.ones((N, N))
         A[range(N), range(N)] = 0
         return cls(A=A)
+        
+    @classmethod
+    def random_regular(cls, N: int, r: int):
+    
+        if N % 2:
+            raise ValueError('N must be even for a regular graph')
+            
+        if 2 * r > N:
+            raise ValueError('N cannot be less than 2r')
+            
+        A = np.zeros((N, N))
+        
+        order = np.arange(N)
+        np.random.shuffle(order)
+        order = order.reshape((N // 2, 2))
+            
+        for i in range(r):
+        
+            order[:, 1] = np.roll(order[:, 1], i)
+            
+            for a, b in order:
+                A[a, b] = A[b, a] = 1
+                
+        return cls(A=A)
 
     def __init__(self,
                  A: Array = None,

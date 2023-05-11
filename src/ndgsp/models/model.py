@@ -5,6 +5,7 @@ from jax import jit
 from pykronecker import KroneckerDiag, KroneckerIdentity
 
 from ndgsp.algorithms.cgm import solve_SPCGM, solve_CGM
+from ndgsp.algorithms.sim import solve_SIM
 from ndgsp.graph.filters import FilterFunction
 from ndgsp.graph.graphs import BaseGraph, ProductGraph
 from ndgsp.utils.types import Signal, Array, Operator
@@ -22,12 +23,11 @@ class Model(ABC):
     U: Operator
     gamma: float
 
-    @abstractmethod
     def get_G(self):
-        raise NotImplementedError
+        return self.graph.get_G(self.filter_func)
 
     @abstractmethod
-    def compute_mean(self, tol: float=1e-8, verbose: bool=False):
+    def compute_mean(self, method: str='cgm'):
         raise NotImplementedError
 
     @abstractmethod
@@ -71,20 +71,23 @@ class Model(ABC):
 
 class RealModel(Model, ABC):
 
-    def compute_mean(self, tol: float=1e-8, verbose: bool=False):
+    def compute_mean(self, method='cgm'):
 
-        DG = KroneckerDiag(self.get_G())
-        DS = KroneckerDiag(self.S)
-        I = KroneckerIdentity(like=DG)
+        if method.lower() == 'cgm':
 
-        A = DG @ self.U.T @ DS @ self.U @ DG + self.gamma * I
-        Phi = self.U @ DG
+            DG = KroneckerDiag(self.get_G())
+            DS = KroneckerDiag(self.S)
+            A_precon = DG @ self.U.T @ DS @ self.U @ DG + self.gamma * KroneckerIdentity(like=DG)
 
-        return solve_SPCGM(A_precon=A,
-                           y=self.Y,
-                           Phi=Phi,
-                           reltol=tol,
-                           verbose=verbose)
+            return solve_SPCGM(A_precon=A_precon, Y=self.Y, Phi=self.U @ DG)
+
+        elif method.lower() == 'sim':
+
+            G = self.get_G()
+            J = (G ** 2) / (G ** 2 + self.gamma)
+            Minv = self.U @ KroneckerDiag(J) @ self.U.T
+
+            return solve_SIM(Minv, KroneckerDiag(1 - self.S), self.Y)
 
     def sample(self, n_samples: int=1):
 
@@ -117,7 +120,7 @@ class LogisticModel(Model, ABC):
     def get_mu(alpha: Array):
         return (1 + jnp.exp(-alpha)) ** -1
 
-    def _compute_alpha_star(self):
+    def _compute_alpha_star(self, method: str='cgm'):
 
         DG = KroneckerDiag(self.get_G())
         DS = KroneckerDiag(self.S)
@@ -137,8 +140,8 @@ class LogisticModel(Model, ABC):
 
         return alpha_
 
-    def compute_mean(self, tol: float=1e-8, verbose: bool=False):
-        return self.get_mu(self.U @ KroneckerDiag(self.get_G()) @ self._compute_alpha_star())
+    def compute_mean(self, method: str='cgm'):
+        return self.get_mu(self.U @ KroneckerDiag(self.get_G()) @ self._compute_alpha_star(method=method))
 
     def sample(self, n_samples: int=1):
 

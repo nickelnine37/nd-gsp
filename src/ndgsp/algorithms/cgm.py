@@ -1,21 +1,20 @@
 import numpy as np
-from typing import Union
+from typing import Union, Tuple
 from numpy import ndarray
 from scipy.sparse import spmatrix
 
 from pykronecker.base import KroneckerOperator
+from scipy.sparse.linalg import cg, LinearOperator
 
 from ndgsp.utils.types import Operator, Array
 
 
 def solve_SPCGM(A_precon: Operator,
-                y: Array,
+                Y: Array,
                 Phi: Operator,
-                x0: Array = None,
                 max_iter=20000,
-                reltol=1e-8,
-                verbose=False
-                ) -> Array:
+                tol=None,
+                ) -> Tuple[Array, int]:
     """
     Solve a symmetric preconditioned version of the conjugate gradient method. Here, we look to
     solve the linear equation
@@ -34,16 +33,14 @@ def solve_SPCGM(A_precon: Operator,
     -------
     x               The result of solving the linear system
     """
-
-    return Phi @ solve_CGM(A=A_precon, y=Phi.T @ y, x0=x0, max_iter=max_iter, reltol=reltol, verbose=verbose)
+    out, nits = solve_CGM(A=A_precon, Y=Phi.T @ Y, max_iter=max_iter, tol=tol)
+    return Phi @ out, nits
 
 
 def solve_CGM(A: Operator,
-              y: Array,
-              x0: Array = None,
-              max_iter=20000,
-              reltol=1e-8,
-              verbose=False) -> Array:
+              Y: Array,
+              max_iter=10000,
+              tol=1e-8) -> Tuple[Array, int]:
     """
 
     Use the conjugate gradient method to solve the linear system Ax = y.
@@ -55,50 +52,54 @@ def solve_CGM(A: Operator,
     x0              An optional initial guess for x
     max_iter        Maximum number of iterations
     reltol          The relative tolerance level
-    verbose         If True prints some extra information
 
     Returns
     -------
     x               The result of solving the linear system
     """
 
-    if x0 is None:
-        x = np.zeros_like(y)
+    n_elements = np.prod(Y.shape)
+    nits = 0
 
-    else:
-        x = x0
+    def iter_count(arr):
+        nonlocal nits
+        nits += 1
 
-    r = y - A @ x
+    linop = LinearOperator((n_elements, n_elements), matvec=lambda x: A @ x)
+    z, exit_code = cg(linop, Y.ravel(), callback=iter_count, maxiter=max_iter)
 
-    d = r
-    res_new = (r ** 2).sum()
-    res0 = res_new
+    return z.reshape(Y.shape), nits
 
-    its = 0
 
-    while its < max_iter and res_new > (reltol ** 2 * res0):
+if __name__ == '__main__':
 
-        its += 1
+    from ndgsp.graph.graphs import ProductGraph
+    from ndgsp.graph.filters import MultivariateFilterFunction
+    from pykronecker import KroneckerDiag, KroneckerIdentity
 
-        Ad = A @ d
+    np.set_printoptions(precision=3, linewidth=500, threshold=500, suppress=True, edgeitems=5)
 
-        alpha = res_new / (d * Ad).sum()
+    np.random.seed(0)
 
-        x += alpha * d
+    N = 10
+    T = 20
 
-        # periodically rescale
-        if its % 50 == 0:
-            r = y - A @ x
-            d = r
+    graph = ProductGraph.lattice(N, T)
+    f_func = MultivariateFilterFunction.diffusion([0.2, 0.2])
+    gamma = 1
+    S = np.random.randint(2, size=(N, T))
+    DS = KroneckerDiag(S)
+    Y = np.random.normal(size=(N, T))
 
-        else:
-            r -= alpha * Ad
+    G = f_func(graph.lams)
+    DG = KroneckerDiag(G)
 
-        res_old = res_new
-        res_new = (r ** 2).sum()
-        d = r + d * res_new / res_old
+    A_precon = DG @ graph.U.T @ DS @ graph.U @ DG + gamma * KroneckerIdentity(like=DS)
+    Phi = graph.U @ DG
 
-    if its == max_iter:
-        print(f'Warning: failed to converge in {its} iterations')
+    F, nits = solve_SPCGM(A_precon, Y, Phi)
 
-    return x
+    Hi2 = (graph.U @ KroneckerDiag(G ** -2) @ graph.U.T).to_array()
+    F_ = np.linalg.solve(np.diag(S.reshape(-1)) + gamma * Hi2, Y.reshape(-1)).reshape(N, T)
+
+    print(np.allclose(F, F_, atol=1e-4))

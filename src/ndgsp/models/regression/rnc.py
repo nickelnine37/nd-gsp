@@ -4,8 +4,8 @@ import numpy as np
 from pykronecker import KroneckerDiag, KroneckerIdentity, KroneckerBlock, KroneckerBlockDiag
 
 from ndgsp.algorithms.cgm import solve_CGM, solve_SPCGM
-from ndgsp.graph.filters import FilterFunction
-from ndgsp.graph.graphs import BaseGraph
+from ndgsp.graph.filters import FilterFunction, MultivariateFilterFunction
+from ndgsp.graph.graphs import BaseGraph, ProductGraph
 from ndgsp.models.model import Model, LogisticModel, RealModel
 from ndgsp.utils.types import Array, Signal
 import jax.numpy as jnp
@@ -34,10 +34,6 @@ class NCModel(Model, ABC):
         assert X.shape[0] == np.prod(self.Y.shape)
         self.X = jnp.asarray(X)
 
-    def get_G(self):
-        return self.graph.get_G(self.filter_func)
-
-
 
 class RNC(RealModel, NCModel):
 
@@ -45,26 +41,23 @@ class RNC(RealModel, NCModel):
 
         DG = KroneckerDiag(self.get_G())
         DS = KroneckerDiag(self.S)
-        I = KroneckerIdentity(like=DG)
-
         Xq = self.X[self.S.astype(bool).ravel(), :]
-        lamX, Psi = jnp.linalg.eigh(Xq.T @ Xq)
-        DX = jnp.diag((lamX + self.lam) ** -0.5)
+        lamM, UM = jnp.linalg.eigh(Xq.T @ Xq)
+        DM = jnp.diag((lamM + self.lam) ** -0.5)
 
-        M11 = DG @ self.U.T @ DS @ self.U @ DG + self.gamma * I
-        M12 = DG @ self.U.T @ DS @ self.X @ Psi @ DX
+        M11 = DG @ self.U.T @ DS @ self.U @ DG + self.gamma * KroneckerIdentity(like=DG)
+        M12 = DG @ self.U.T @ DS @ self.X @ UM @ DM
 
         M = KroneckerBlock([[M11, M12], [M12.T, np.eye(self.X.shape[1])]])
-        Y = np.concatenate([self.S.ravel(), Xq.sum(0)])
+        Y_ = np.concatenate([self.Y.ravel(), self.X.T @ self.Y.ravel()])
 
-        Phi = KroneckerBlockDiag([self.U @ DG, Psi @ DX])
+        Phi = KroneckerBlockDiag([self.U @ DG, UM @ DM])
 
-        return solve_SPCGM(A_precon=M,
-                           y=self.Y,
-                           Phi=Phi,
-                           reltol=tol,
-                           verbose=verbose)
+        theta, nits = solve_SPCGM(A_precon=M, Y=Y_, Phi=Phi)
+        alpha = theta[:self.graph.N]
+        beta = theta[self.graph.N:]
 
+        return (alpha + self.X @ beta).reshape(self.Y.shape)
 
     def sample(self, n_samples: int = 1):
         pass
@@ -169,3 +162,56 @@ class LogisticRNC(LogisticModel, NCModel):
 
         else:
             return samples
+
+
+
+if __name__ == '__main__':
+
+    N1 = 4
+    N2 = 5
+    N3 = 6
+    M = 3
+
+    np.random.seed(0)
+
+    np.set_printoptions(precision=3, linewidth=500, threshold=500, suppress=True, edgeitems=5)
+
+    X = np.random.normal(size=(N1 * N2 * N3, M))
+    Y = np.random.normal(size=(N1, N2, N3))
+    Y[np.random.randint(2, size=(N1, N2, N3)).astype(bool)] = np.nan
+
+    graph = ProductGraph.lattice(N1, N2, N3)
+    ffunc = MultivariateFilterFunction.diffusion([0.2] * 3)
+
+    model = RNC(X, Y, graph, ffunc, 1, 1)
+
+    F = model.compute_mean()
+
+    G = ffunc(graph.lams)
+
+    Hi2 = graph.U @ KroneckerDiag(G ** -2) @ graph.U.T
+    S = (~np.isnan(Y)).astype(int)
+    DS = KroneckerDiag(S)
+    Y_ = Y.copy()
+    Y_[np.isnan(Y)] = 0
+
+    P = np.block([[(DS + Hi2).to_array(), DS @ X], [X.T @ DS, X.T @ DS @ X + np.eye(M)]])
+    theta = np.linalg.solve(P, np.block([Y_.ravel(), X.T @ Y_.ravel()]))
+    alpha = theta[:graph.N]
+    beta = theta[graph.N:]
+    F_ = (alpha + X @ beta).reshape(Y.shape)
+
+    print(F)
+
+    print(F_)
+
+
+    import matplotlib.pyplot as plt
+
+    plt.figure()
+
+    plt.plot(F.ravel())
+
+    plt.plot(F_.ravel())
+
+    plt.show()

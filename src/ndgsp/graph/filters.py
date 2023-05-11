@@ -14,7 +14,6 @@ class FilterFunction(ABC):
 
     """
 
-
     filter: Callable = None
     beta: float | ndarray = None
     ndim: int = None
