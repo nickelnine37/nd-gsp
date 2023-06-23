@@ -6,14 +6,11 @@ from numpy.linalg import eigh
 import networkx as nx
 from typing import Union, List
 
-from pykronecker.base import KroneckerOperator
 from scipy.sparse.csgraph import minimum_spanning_tree
 from scipy.spatial.distance import pdist, squareform
 
 from pykronecker import KroneckerSum, KroneckerProduct
-# from src.utils.linalg import spdiag
-# from src.utils.gsp import check_valid_adjacency, check_valid_laplacian
-from ndgsp.graph.filters import FilterFunction, UnivariateFilterFunction, MultivariateFilterFunction
+from ndgsp.filters import FilterFunction, UnivariateFilterFunction, MultivariateFilterFunction
 
 from ndgsp.utils.types import Numeric, Array, Operator
 import jax.numpy as jnp
@@ -64,7 +61,12 @@ class BaseGraph(ABC):
         """
         Scale the graph fourier coefficients of a signal Y by the function G.
         """
-        return self.rGFT(G * self.GFT(Y))
+
+        if Y.ndim == 1:
+            return self.rGFT(G.ravel() * self.GFT(Y))
+        
+        else:
+            return self.rGFT(G * self.GFT(Y))
 
     def get_G(self, filter_func: FilterFunction):
 
@@ -77,12 +79,17 @@ class BaseGraph(ABC):
         else:
             raise ValueError(f'filter_func should be an instance of graph.filters.FilterFunction, but it is {type(filter_func)}')
 
-    def filter(self, Y: ndarray, filter_func: FilterFunction) -> ndarray:
+    def filter(self, Y: ndarray, filter_func: FilterFunction, power: float=None) -> ndarray:
         """
         Filter a graph signal Y given a graph filter function filter_func
         """
-
-        return self.scale_spectral(Y, self.get_G(filter_func))
+        
+        if power is None:
+            return self.scale_spectral(Y, self.get_G(filter_func))
+        
+        else:
+            return self.scale_spectral(Y, self.get_G(filter_func) ** power)
+        
 
     def __getattribute__(self, item):
         """
@@ -431,7 +438,7 @@ class ProductGraph(BaseGraph):
             for graph in self.graphs:
                 graph._decompose()
 
-            self.U = KroneckerProduct([graph.U for graph in self.graphs])
+            self.U = KroneckerProduct([jnp.asarray(graph.U) for graph in self.graphs])
 
             # DO NOT ASSIGN lams DIRECTLY TO INSTANCE
             lams = np.array(np.meshgrid(*[g.lam for g in self.graphs], indexing='ij'))
@@ -443,6 +450,11 @@ class ProductGraph(BaseGraph):
             self.lams = lams
 
             self.decomposed = True
+
+    @classmethod
+    def random_connected(cls, *Ns):
+        graphs = [Graph.random_connected(N) for N in Ns]
+        return cls(graphs=graphs)
 
     def __repr__(self):
         return f'Graph(N={" x ".join([str(graph.N) for graph in self.graphs])})'

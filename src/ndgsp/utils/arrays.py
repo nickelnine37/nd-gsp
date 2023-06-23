@@ -1,6 +1,6 @@
 from ndgsp.utils.types import Array
 import jax.numpy as jnp
-
+import numpy as np
 
 def expand_dims(x: Array, where='left', n: int = 1):
     """
@@ -29,3 +29,11 @@ def outer_product(x, y):
     y = y.squeeze()
 
     return expand_dims(x, 'right', y.ndim) * expand_dims(y, 'left', x.ndim)
+
+
+def one_hot(targets: np.ndarray, num_classes: int) -> np.ndarray:
+    """
+    Return one hot encoding of input array. 
+    """
+    res = np.eye(num_classes)[np.array(targets).reshape(-1)]
+    return res.reshape(list(targets.shape)+[num_classes])

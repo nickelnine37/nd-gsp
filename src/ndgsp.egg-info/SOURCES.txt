@@ -8,11 +8,13 @@ src/ndgsp.egg-info/SOURCES.txt
 src/ndgsp.egg-info/dependency_links.txt
 src/ndgsp.egg-info/top_level.txt
 src/ndgsp/algorithms/cgm.py
+src/ndgsp/algorithms/sim.py
 src/ndgsp/graph/__init__.py
 src/ndgsp/graph/filters.py
 src/ndgsp/graph/graphs.py
 src/ndgsp/models/__init__.py
 src/ndgsp/models/model.py
+src/ndgsp/models/model2.py
 src/ndgsp/models/reconstruction.py
 src/ndgsp/models/regression/__init__.py
 src/ndgsp/models/regression/kernel.py

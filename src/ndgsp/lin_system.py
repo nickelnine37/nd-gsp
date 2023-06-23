@@ -1,10 +1,8 @@
 import numpy as np
-from typing import Union, Tuple
-from numpy import ndarray
-from scipy.sparse import spmatrix
+from typing import Tuple
+# from scipy.sparse.linalg import cg, LinearOperator
 
-from pykronecker.base import KroneckerOperator
-from scipy.sparse.linalg import cg, LinearOperator
+from jax.scipy.sparse.linalg import cg
 
 from ndgsp.utils.types import Operator, Array
 
@@ -65,41 +63,49 @@ def solve_CGM(A: Operator,
         nonlocal nits
         nits += 1
 
-    linop = LinearOperator((n_elements, n_elements), matvec=lambda x: A @ x)
-    z, exit_code = cg(linop, Y.ravel(), callback=iter_count, maxiter=max_iter)
+    # linop = LinearOperator((n_elements, n_elements), matvec=lambda x: A @ x)
+    # z, exit_code = cg(linop, Y.ravel(), callback=iter_count, maxiter=max_iter)
 
+    z, exit_code = cg(A, Y, maxiter=max_iter)
+ 
     return z.reshape(Y.shape), nits
 
 
-if __name__ == '__main__':
 
-    from ndgsp.graph.graphs import ProductGraph
-    from ndgsp.graph.filters import MultivariateFilterFunction
-    from pykronecker import KroneckerDiag, KroneckerIdentity
+def solve_SIM(Minv: Operator,
+              N: Operator,
+              Y: Array,
+              max_iters: int = 10000,
+              tol: float = 1e-8) -> Tuple[Array, int]:
+    """
+    Solve a linear system using the stationary iterative method of matrix splitting. In particular,
+    we wish to solve the system f = inv(A) @ y by splitting the coefficient matrix A into A = M - N.
 
-    np.set_printoptions(precision=3, linewidth=500, threshold=500, suppress=True, edgeitems=5)
+    Params:
+        Minv:       inv(M) as an operator. Can be an array or a KroneckerOperator.
+        N:          N as an operator. Can be an array or a KroneckerOperator.
+        Y:          Y in the linear system
+        max_iters:  The maximum number of iterations
+        tol:        The convergence tolerance
 
-    np.random.seed(0)
+    Returns:
+        F:          The solution to the linear system
+        nits:       The number of iterations taken to converge
+    """
 
-    N = 10
-    T = 20
+    n_elements = np.prod(Y.shape)
+    dF = Minv @ Y
+    F = dF
+    nits = 0
 
-    graph = ProductGraph.lattice(N, T)
-    f_func = MultivariateFilterFunction.diffusion([0.2, 0.2])
-    gamma = 1
-    S = np.random.randint(2, size=(N, T))
-    DS = KroneckerDiag(S)
-    Y = np.random.normal(size=(N, T))
+    while (dF ** 2).sum() ** 0.5 / n_elements > tol:
 
-    G = f_func(graph.lams)
-    DG = KroneckerDiag(G)
+        dF = Minv @ N @ dF
+        F += dF
+        nits += 1
 
-    A_precon = DG @ graph.U.T @ DS @ graph.U @ DG + gamma * KroneckerIdentity(like=DS)
-    Phi = graph.U @ DG
+        if nits == max_iters:
+            print(f'Warning: Maximum iterations ({max_iters}) reached')
+            break
 
-    F, nits = solve_SPCGM(A_precon, Y, Phi)
-
-    Hi2 = (graph.U @ KroneckerDiag(G ** -2) @ graph.U.T).to_array()
-    F_ = np.linalg.solve(np.diag(S.reshape(-1)) + gamma * Hi2, Y.reshape(-1)).reshape(N, T)
-
-    print(np.allclose(F, F_, atol=1e-4))
+    return F, nits
