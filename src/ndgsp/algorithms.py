@@ -7,6 +7,9 @@ from ndgsp.lin_system import solve_SPCGM
 from ndgsp.utils.arrays import outer_product
 from ndgsp.operators import KroneckerExpanded, KroneckerMuBlock, KroneckerQXBlock
 
+from tqdm import tqdm, trange
+from typing import List
+
 
 def assert_float64(*As):
     """
@@ -23,15 +26,16 @@ def assert_float64(*As):
             raise ValueError(err)
 
 
-
 @jit
 def mu_logistic(F: jnp.array):
     return 1 / (1 + jnp.exp(-F))
+
 
 @jit
 def mu_softmax(F: jnp.array):
     F_ = jnp.exp(F)
     return F_ / F_.sum(-1)[..., None] 
+
 
 @jit
 def XRmuX(Mu: jnp.array, DSX: jnp.array):
@@ -85,7 +89,7 @@ def solve_gsr(Y: np.ndarray, S: np.ndarray, U: KroneckerProduct, G: np.ndarray, 
     return np.asarray(F)
 
 
-def sample_gsr(Y: np.ndarray, S: np.ndarray, U: KroneckerProduct, G: np.ndarray, gamma: float, n_samples: int=1, seed: int=None) -> np.ndarray:
+def sample_gsr(Y: np.ndarray, S: np.ndarray, U: KroneckerProduct, G: np.ndarray, gamma: float, n_samples: int=1, seed: int=None) -> List[np.ndarray]:
     """
     Sample from posterior of Graph Signal Reconstruction model
     
@@ -99,7 +103,7 @@ def sample_gsr(Y: np.ndarray, S: np.ndarray, U: KroneckerProduct, G: np.ndarray,
         seed:        int - random seed
         
     Returns:
-        Fs:        ndarray (float) (n_samples, N_1, ..., N_d) - samples of the reconstructed graph signal
+        Fs:          List[np.ndarray (float)]  (n_samples, N_1, ..., N_d) - samples of the reconstructed graph signal
     """
     
     if seed is not None:
@@ -109,8 +113,6 @@ def sample_gsr(Y: np.ndarray, S: np.ndarray, U: KroneckerProduct, G: np.ndarray,
     S = jnp.asarray(S.astype(float))
     G = jnp.asarray(G)
 
-    assert_float64(Y, S, G, U)
-
     DG = KroneckerDiag(G)
     DS = KroneckerDiag(S)
     
@@ -119,7 +121,7 @@ def sample_gsr(Y: np.ndarray, S: np.ndarray, U: KroneckerProduct, G: np.ndarray,
     
     Fs = []
     
-    for i in range(n_samples):
+    for i in trange(n_samples):
         
         z1 = jnp.asarray(np.random.normal(size=Y.shape))
         z2 = jnp.asarray(np.random.normal(size=Y.shape))
@@ -132,6 +134,50 @@ def sample_gsr(Y: np.ndarray, S: np.ndarray, U: KroneckerProduct, G: np.ndarray,
         Fs.append(np.asarray(F))
     
     return Fs
+
+
+def generate_samples_gsr(Y: np.ndarray, S: np.ndarray, U: KroneckerProduct, G: np.ndarray, gamma: float, n_samples: int=1, seed: int=None) -> np.ndarray: 
+    """
+    Generate samples from posterior of Graph Signal Reconstruction model, using a more memory efficient generator pattern
+    
+    Params:
+        Y:           ndarray (float) (N_1, ..., N_d) - partially observed input (with zeros for missing data)
+        Y:           ndarray (binary) (N_1, ..., N_d) - binary sensing tensor
+        U:           KroneckerProduct (float) (N, N) - GFT eigenvector matrix
+        G:           ndarray (float) (N_1, ..., N_d) - spectral scaling tensor
+        gamma:       float - graph regularisation parameter
+        n_samples:   int - number of samples
+        seed:        int - random seed
+        
+    Yields:
+        F:           ndarray (float) (N_1, ..., N_d) - sample of the reconstructed graph signal
+    """
+    
+    if seed is not None:
+        np.random.seed(seed)
+    
+    Y = jnp.asarray(Y)
+    S = jnp.asarray(S.astype(float))
+    G = jnp.asarray(G)
+
+    DG = KroneckerDiag(G)
+    DS = KroneckerDiag(S)
+    
+    Phi = U @ DG
+    Q = Phi.T @ DS @ Phi + gamma * KroneckerIdentity(like=DS)
+        
+    for i in trange(n_samples):
+        
+        z1 = jnp.asarray(np.random.normal(size=Y.shape))
+        z2 = jnp.asarray(np.random.normal(size=Y.shape))
+
+        a1 = DG @ U.T @ DS @ z1
+        a2 = gamma ** 0.5 * z2
+
+        F, nits = solve_SPCGM(A_precon=Q, Y=(Y + a1 + a2), Phi=Phi)
+        
+        yield np.asarray(F)
+    
 
 
 def solve_kgr(Y: np.ndarray, S: np.ndarray, U: KroneckerProduct, G: np.ndarray, V: np.ndarray, lamK: np.ndarray, gamma: float) -> np.ndarray:
@@ -164,7 +210,7 @@ def solve_kgr(Y: np.ndarray, S: np.ndarray, U: KroneckerProduct, G: np.ndarray, 
     return solve_gsr(Y, S, U_, G_, gamma)
 
 
-def sample_kgr(Y: np.ndarray, S: np.ndarray, U: KroneckerProduct, G: np.ndarray, V: np.ndarray, lamK: np.ndarray, gamma: float, n_samples: int=1, seed: int=None) -> np.ndarray:
+def sample_kgr(Y: np.ndarray, S: np.ndarray, U: KroneckerProduct, G: np.ndarray, V: np.ndarray, lamK: np.ndarray, gamma: float, n_samples: int=1, seed: int=None) -> List[np.ndarray]:
     """
     Sample from posterior of Kernel Graph Regression model
     
@@ -180,15 +226,54 @@ def sample_kgr(Y: np.ndarray, S: np.ndarray, U: KroneckerProduct, G: np.ndarray,
         seed:        int - random seed
         
     Returns:
-        Fs:         ndarray (float) (n_samples, T, N_1, ..., N_d) - samples of the reconstructed graph signal
+        Fs:         List[np.ndarray (float)] (n_samples, T, N_1, ..., N_d) - samples of the reconstructed graph signal
     """
+
+    V = jnp.asarray(V)
+    lamK = jnp.asarray(lamK)
         
-    U_ = KroneckerProduct([jnp.asarray(V)] + U.As)
+    if isinstance(U, KroneckerProduct):
+        U_ = KroneckerProduct([V] + U.As)
+    else:
+        U_ = KroneckerProduct([V, U])
+
     G_ = outer_product(lamK ** 0.5, G)
 
     return sample_gsr(Y, S, U_, G_, gamma, n_samples, seed)
     
+
+def generate_samples_kgr(Y: np.ndarray, S: np.ndarray, U: KroneckerProduct, G: np.ndarray, V: np.ndarray, lamK: np.ndarray, gamma: float, n_samples: int=1, seed: int=None) -> np.ndarray:
+    """
+    Generate samples from posterior of Kernel Graph Regression model, using a more memory efficient generator pattern
     
+    Params:
+        Y:           ndarray (float) (T, N_1, ..., N_d) - partially observed input (with zeros for missing data)
+        S:           ndarray (binary) (T, N_1, ..., N_d) - binary sensing tensor
+        U:           KroneckerProduct (float) (N, N) - GFT eigenvector matrix
+        G:           ndarray (float) (N_1, ..., N_d) - spectral scaling tensor
+        gamma:       float - graph regularisation parameter
+        V:           ndarray (T, T) - eigenvector matrix of kernel matrix
+        lamK:        ndarray (T, ) - eigenvalue vector of kernel matrix 
+        n_samples:   int - number of samples
+        seed:        int - random seed
+        
+    Yields:
+        F:         ndarray (float) (T, N_1, ..., N_d) - sample of the reconstructed graph signal
+    """
+
+    V = jnp.asarray(V)
+    lamK = jnp.asarray(lamK)
+        
+    if isinstance(U, KroneckerProduct):
+        U_ = KroneckerProduct([V] + U.As)
+    else:
+        U_ = KroneckerProduct([V, U])
+
+    G_ = outer_product(lamK ** 0.5, G)
+
+    return generate_samples_gsr(Y, S, U_, G_, gamma, n_samples, seed)
+
+
 def solve_rnc(X: np.ndarray, Y: np.ndarray, S: np.ndarray, U: KroneckerProduct, G: np.ndarray, gamma: float, lam: float) -> np.ndarray:
     """
     Solve for posterior mean of Regression with Network Cohesion model
@@ -232,7 +317,7 @@ def solve_rnc(X: np.ndarray, Y: np.ndarray, S: np.ndarray, U: KroneckerProduct, 
     return np.asarray(theta)
 
 
-def sample_rnc(X: np.ndarray, Y: np.ndarray, S: np.ndarray, U: KroneckerProduct, G: np.ndarray, gamma: float, lam: float, n_samples: int=1, seed: int=None) -> np.ndarray:
+def sample_rnc(X: np.ndarray, Y: np.ndarray, S: np.ndarray, U: KroneckerProduct, G: np.ndarray, gamma: float, lam: float, n_samples: int=1, seed: int=None) -> List[np.ndarray]:
     """
     Sample from posterior of Regression with Network Cohesion model
     
@@ -246,8 +331,8 @@ def sample_rnc(X: np.ndarray, Y: np.ndarray, S: np.ndarray, U: KroneckerProduct,
         n_samples:   int - number of samples
         seed:        int - random seed
         
-    ReturnsL
-        thetas:      ndarray (float) (n_samples, N + M) - samples of the RNC parameter vector
+    Returns:
+        thetas:      List[np.ndarray (float)] (n_samples, N + M) - samples of the RNC parameter vector
     """
     
     if seed is not None:
@@ -282,7 +367,7 @@ def sample_rnc(X: np.ndarray, Y: np.ndarray, S: np.ndarray, U: KroneckerProduct,
     
     thetas = []
     
-    for i in range(n_samples):
+    for i in trange(n_samples):
         
         z1 = np.random.normal(size=N + M)
         z2 = np.random.normal(size=N + M)
@@ -294,7 +379,117 @@ def sample_rnc(X: np.ndarray, Y: np.ndarray, S: np.ndarray, U: KroneckerProduct,
 
         thetas.append(theta)
         
-    return np.squeeze(np.asarray(thetas))
+    return thetas
+
+
+def generate_samples_rnc(X: np.ndarray, Y: np.ndarray, S: np.ndarray, U: KroneckerProduct, G: np.ndarray, gamma: float, lam: float, n_samples: int=1, seed: int=None) -> np.ndarray:
+    """
+    Generate samples from posterior of Regression with Network Cohesion model, using a more memory efficient generator pattern
+    
+    Params:
+        X:           ndaray (float)  (N_1, ..., N_d, M) - tensor of explanatory variables
+        Y:           ndarray (float) (N_1, ..., N_d) - partially observed input (with zeros for missing data)
+        Y:           ndarray (binary) (N_1, ..., N_d) - binary sensing tensor
+        U:           KroneckerProduct (float) (N, N) - GFT eigenvector matrix
+        G:           ndarray (float) (N_1, ..., N_d) - spectral scaling tensor
+        gamma:       float - graph regularisation parameter
+        n_samples:   int - number of samples
+        seed:        int - random seed
+        
+    Yields:
+        theta:      np.ndarray (float) (N + M) - sample of the RNC parameter vector
+    """
+    
+    if seed is not None:
+        np.random.seed(seed)
+    
+    Y = jnp.asarray(Y)
+    S = jnp.asarray(S.astype(float))
+    G = jnp.asarray(G)
+    DG = KroneckerDiag(G)
+    DS = KroneckerDiag(S)
+    X = jnp.asarray(X.reshape(-1, X.shape[-1]))        
+
+    lamM, UM = jnp.linalg.eigh(X.T @ DS @ X)
+    DM = jnp.diag((lamM + lam) ** -0.5)
+        
+    Q11 = DG @ U.T @ DS @ U @ DG + gamma * KroneckerIdentity(like=DS)
+    Q12 = DG @ U.T @ DS @ X @ UM @ DM
+    Q21 = Q12.T
+    Q22 = jnp.eye(X.shape[-1])
+    
+    Q = KroneckerBlock([[Q11, Q12], [Q21, Q22]])
+    Phi = KroneckerBlockDiag([U @ DG, UM @ DM])
+    
+    y = Y.reshape(-1)
+    Y_ = jnp.concatenate([y, X.T @ y])
+    
+    N = np.prod(Y.shape)
+    M = X.shape[-1]
+    
+    A1 = KroneckerBlock([[DG @ U.T @ DS, np.zeros((N, M))], [DM @ UM.T @ X.T @ DS, np.zeros((M, M))]])
+    A2 = KroneckerBlockDiag([gamma ** 0.5 * KroneckerIdentity(like=DG), lam ** 0.5 * jnp.eye(M)])
+    
+    thetas = []
+    
+    for i in trange(n_samples):
+        
+        z1 = np.random.normal(size=N + M)
+        z2 = np.random.normal(size=N + M)
+        
+        a1 = A1 @ z1
+        a2 = A2 @ z2
+
+        theta, nits = solve_SPCGM(A_precon=Q, Y=(Y_ + a1 + a2), Phi=Phi)
+
+        yield theta
+        
+
+
+def solve_kgrnc(X: np.ndarray, Y: np.ndarray, S: np.ndarray, U: KroneckerProduct, G: np.ndarray, V: np.ndarray, lamK: np.ndarray, gamma: float, lam: float) -> np.ndarray:
+
+    V = jnp.asarray(V)
+    lamK = jnp.asarray(lamK)
+    
+    if isinstance(U, KroneckerProduct):
+        U_ = KroneckerProduct([V] + U.As)
+    else:
+        U_ = KroneckerProduct([V, U])
+
+    G_ = outer_product(lamK ** 0.5, G)
+
+    return solve_rnc(X, Y, S, U_, G_, gamma, lam)
+
+
+def sample_kgrnc(X: np.ndarray, Y: np.ndarray, S: np.ndarray, U: KroneckerProduct, G: np.ndarray, V: np.ndarray, lamK: np.ndarray, gamma: float, lam: float, n_samples: int=1, seed: int=None) -> List[np.ndarray]:
+
+    V = jnp.asarray(V)
+    lamK = jnp.asarray(lamK)
+    
+    if isinstance(U, KroneckerProduct):
+        U_ = KroneckerProduct([V] + U.As)
+    else:
+        U_ = KroneckerProduct([V, U])
+
+    G_ = outer_product(lamK ** 0.5, G)
+
+    return sample_rnc(X, Y, S, U_, G_, gamma, lam, n_samples, seed)
+
+
+def generate_samples_kgrnc(X: np.ndarray, Y: np.ndarray, S: np.ndarray, U: KroneckerProduct, G: np.ndarray, V: np.ndarray, lamK: np.ndarray, gamma: float, lam: float, n_samples: int=1, seed: int=None) -> np.ndarray:
+
+    V = jnp.asarray(V)
+    lamK = jnp.asarray(lamK)
+    
+    if isinstance(U, KroneckerProduct):
+        U_ = KroneckerProduct([V] + U.As)
+    else:
+        U_ = KroneckerProduct([V, U])
+
+    G_ = outer_product(lamK ** 0.5, G)
+
+    return generate_samples_rnc(X, Y, S, U_, G_, gamma, lam, n_samples, seed)
+
 
 
 def solve_lgsr(Y: np.ndarray, S: np.ndarray, U: KroneckerProduct, G: np.ndarray, gamma: float) -> np.ndarray:
@@ -436,6 +631,7 @@ def solve_lrnc(X: np.ndarray, Y: np.ndarray, S: np.ndarray, U: KroneckerProduct,
     return np.asarray(theta)
 
 
+
 def solve_lgsr_multiclass(Y: np.ndarray, S: np.ndarray, U: KroneckerProduct, G: np.ndarray, gamma: float) -> np.ndarray:
     """
     Solve for posterior mean of Multiclass Logistic Graph Signal Reconstruction Model
@@ -507,7 +703,6 @@ def solve_lkgr_multiclass(Y: np.ndarray, S: np.ndarray, U: KroneckerProduct, G: 
     G_ = outer_product(lamK ** 0.5, G)
     
     return solve_lgsr_multiclass(Y, S, U_, G_, gamma)
-
 
 
 def solve_lrnc_multiclass(X: np.ndarray, Y: np.ndarray, S: np.ndarray, U: KroneckerProduct, G: np.ndarray, gamma: float, lam: float) -> np.ndarray:

@@ -99,7 +99,9 @@ class BaseGraph(ABC):
         """
 
         if item in ['U', 'lam', 'lams']:
-            self._decompose()
+
+            if super().__getattribute__(item) is None:
+                self._decompose()
 
         return super().__getattribute__(item)
 
@@ -218,7 +220,7 @@ class Graph(BaseGraph):
         return cls(A=A.astype(float))
 
     @classmethod
-    def random_connected(cls, N: int, seed: int=0):
+    def random_connected(cls, N: int, repeats: int=2, seed: int=0):
         """
         Create a random graph with edges given by the perturbed minimum spanning
         tree algorithm. The resulting graph is fully connected, but is not a tree.
@@ -370,7 +372,7 @@ class ProductGraph(BaseGraph):
             assert len(graphs) > 1, 'At least two graphs should be passed'
 
             if not all(isinstance(graph, Graph) for graph in graphs):
-                raise ValueError('All arguments should be Graph objects')
+                raise ValueError(f'All arguments should be Graph objects, but these objects have types {[type(graph) for graph in graphs]}')
 
             self.graphs = graphs
             self.A = KroneckerSum([graph.A for graph in graphs])
@@ -419,6 +421,15 @@ class ProductGraph(BaseGraph):
         """
         graphs = [Graph.chain(N) for N in Ns]
         return cls(graphs=graphs)
+    
+    @classmethod
+    def torus(cls, *Ns):
+        """
+        Create a lattice graph with Ni ticks in each dimension.
+        """
+        graphs = [Graph.loop(N) for N in Ns]
+        return cls(graphs=graphs)
+
 
     @classmethod
     def image(cls, width: int, height: int):
@@ -442,13 +453,13 @@ class ProductGraph(BaseGraph):
 
             # DO NOT ASSIGN lams DIRECTLY TO INSTANCE
             lams = np.array(np.meshgrid(*[g.lam for g in self.graphs], indexing='ij'))
-
-            # BECAUSE OTHERWISE THIS WOULD CASUE __getattribute__ INFINITE RECURSION
-            self.lam = lams.sum(0)
+            lam = lams.sum(0)
 
             # ASSIGN IT HERE
             self.lams = lams
+            self.lam = lam
 
+            # BECAUSE OTHERWISE THIS WOULD CASUE __getattribute__ INFINITE RECURSION
             self.decomposed = True
 
     @classmethod

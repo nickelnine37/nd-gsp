@@ -60,11 +60,11 @@ class Processor:
         
         S = ~np.isnan(Y)
         
-        Y = np.nan_to_num(Y, copy=False, nan=0).astype(int)
+        Y = np.nan_to_num(Y, copy=False, nan=0)
         
         if one_hot_encode:
             
-            Y = one_hot(Y, num_classes=Y.max() + 1)
+            Y = one_hot(Y.astype(int), num_classes=int(Y.max()) + 1)
             Y *= S.astype(int)[..., None]
         
         return Y, S
@@ -153,6 +153,32 @@ class CohesionModel(Model):
         self.lam = lam
 
 
+class KernelCohesionModel(Model):
+
+    def __init__(self, X: np.ndarray, X_: np.ndarray, Y: np.ndarray, graph: BaseGraph, filter_func: FilterFunction, gamma: float, lam: float, kernel_std: float):
+        super().__init__(Y, graph, filter_func, gamma)
+
+        assert X_.ndim == 2, f'X should be 2d but it has {X.ndim} dims (shape {X.shape})'        
+        assert X_.shape[0] == Y.shape[0], f'X and Y should have the same length first dim, but they have shape {X.shape[0]} and {Y.shape[0]} respectively'
+
+        self.X_ = X_
+        self.X = X
+        self.D = squareform(pdist(X_, metric='sqeuclidean'))
+        self.set_kernel_std(kernel_std)
+        self.set_lam(lam)
+
+    def set_kernel_std(self, kernel_std: float):
+        self.kernel_std = kernel_std
+        self.K = np.exp(-0.5 * self.D / kernel_std ** 2)
+        self.lamK, self.V = np.linalg.eigh(self.K)
+        return self
+    
+    def set_lam(self, lam: float):
+
+        assert lam >= 0, f'lam should be greater than or equal to zero but it is {lam}'
+        self.lam = lam
+
+
 
 class GSR(ReconstructionModel):
     
@@ -163,7 +189,6 @@ class GSR(ReconstructionModel):
         self.Y, self.S = self.processor.preprocess(Y)
         
         assert self.Y.shape == self.graph.signal_shape, f'Y and graph should have compatible dims but they have {self.Y.shape} and {self.graph.signal_shape} respectively'
-        
         
     def solve(self) -> np.ndarray:
         """
@@ -182,6 +207,22 @@ class GSR(ReconstructionModel):
         Fs = sample_gsr(self.Y, self.S, self.U, self.G, self.gamma, n_samples, seed)
     
         return [self.processor.postprocess(F) for F in Fs] 
+
+    def estimate_marginal_variance(n_samples: int, mean: np.ndarray=None, seed: int=None) -> np.ndarray:
+        """
+        Estimate the marginal variance using a memory efficient generator pattern
+        """
+        
+        if mean is None:
+            mean = self.solve()
+
+        var = np.zeros_like(mean)
+        
+        for k, sample in enumerate(generate_samples_gsr(self.Y, self.S, self.U, self.G, self.gamma, n_samples, seed)):
+            
+            var = (k * var + (self.processor.postprocess(sample) - mean) ** 2) / (k + 1)
+
+        return var
 
 
 class LGSR(ReconstructionModel):
@@ -252,7 +293,6 @@ class KGR(KernelModel):
         F = solve_kgr(self.Y, self.S, self.U, self.G, self.V, self.lamK, self.gamma)
         
         return self.processor.postprocess(F)
-    
 
     def sample(self, n_samples: int=1, seed: int=None) -> List[np.ndarray]:
         """
@@ -261,7 +301,23 @@ class KGR(KernelModel):
         
         Fs = sample_kgr(self.Y, self.S, self.U, self.G, self.V, self.lamK, self.gamma, n_samples, seed)
     
-        return [self.processor.postprocess(F) for F in Fs] 
+        return [self.processor.postprocess(F) for F in Fs]
+    
+    def estimate_marginal_variance(n_samples: int, mean: np.ndarray=None, seed: int=None) -> np.ndarray:
+        """
+        Estimate the marginal variance using a memory efficient generator pattern
+        """
+        
+        if mean is None:
+            mean = self.solve()
+
+        var = np.zeros_like(mean)
+        
+        for k, sample in enumerate(generate_samples_kgr(self.Y, self.S, self.U, self.G, self.V, self.lamK, self.gamma, n_samples, seed)):
+            
+            var = (k * var + (self.processor.postprocess(sample) - mean) ** 2) / (k + 1)
+
+        return var
     
 
 class LKGR(KernelModel):
@@ -338,17 +394,16 @@ class RNC(CohesionModel):
         self.B = theta[:self.N].reshape(self.Y.shape)
         self.w = theta[self.N:]
 
-        F = self.B + ( self.X.reshape(-1, self.M) @ self.w).reshape(self.Y.shape)
+        F = self.B + (self.X.reshape(-1, self.M) @ self.w).reshape(self.Y.shape)
 
         return self.processor.postprocess(F)
     
-
     def sample(self, n_samples: int=1, seed: int=None) -> List[np.ndarray]:
         """
         Draw samples from the posterior distribution
         """
         
-        thetas = sample_kgr(self.X, self.Y, self.S, self.U, self.G, self.gamma, self.lam, n_samples, seed)
+        thetas = sample_rnc(self.X, self.Y, self.S, self.U, self.G, self.gamma, self.lam, n_samples, seed)
 
         def f(theta):
             return (theta[:self.N] + self.X.reshape(-1, self.M) @ theta[self.N:]).reshape(self.Y.shape)
@@ -357,10 +412,31 @@ class RNC(CohesionModel):
     
         return [self.processor.postprocess(F) for F in Fs] 
     
+    def estimate_marginal_variance(n_samples: int, mean: np.ndarray=None, seed: int=None) -> np.ndarray:
+        """
+        Estimate the marginal variance using a memory efficient generator pattern
+        """
+
+        def f(theta):
+            return (theta[:self.N] + self.X.reshape(-1, self.M) @ theta[self.N:]).reshape(self.Y.shape)
+        
+        if mean is None:
+            mean = self.solve()
+
+        var = np.zeros_like(mean)
+        
+        for k, sample in enumerate(generate_samples_rnc(self.X, self.Y, self.S, self.U, self.G, self.gamma, self.lam, n_samples, seed)):
+
+            F = f(sample)
+            
+            var = (k * var + (self.processor.postprocess(F) - mean) ** 2) / (k + 1)
+
+        return var
+    
         
 class LRNC(CohesionModel):
 
-    def __init__(self, X: np.ndarray, Y: np.ndarray, graph: BaseGraph, filter_func: FilterFunction, gamma: float, lam: float):
+    def __init__(self, X: np.ndarray, Y: np.ndarray, graph: BaseGraph, filter_func: FilterFunction, gamma: float, lam: float, kernel_std: float):
         super().__init__(X, Y, graph, filter_func, gamma, lam)
 
         self.processor = Processor(Y, normalise=False)
@@ -390,8 +466,6 @@ class LRNC(CohesionModel):
 
         else:
             return self.processor.postprocess(mu_logistic(F)) 
-
-
 
 
 class MulticlassLRNC(CohesionModel):
@@ -425,3 +499,68 @@ class MulticlassLRNC(CohesionModel):
 
         else:
             return self.processor.postprocess(mu_softmax(F), one_hot_decode=False) 
+        
+
+
+class KGRNC(KernelCohesionModel):
+
+    def __init__(self, X: np.ndarray, X_: np.ndarray, Y: np.ndarray, graph: BaseGraph, filter_func: FilterFunction, gamma: float, lam: float, kernel_std: float):
+        super().__init__(X, X_, Y, graph, filter_func, gamma, lam, kernel_std)
+
+        self.processor = Processor(Y, normalise=True)
+        self.Y, self.S = self.processor.preprocess(Y, one_hot_encode=False)
+
+        assert X.shape[:-1] == Y.shape, f'X, and Y do not have compatible dimensions: {X.shape} and {Y.shape} respectively' 
+        self.N = np.prod(Y.shape)
+        self.M = X.shape[-1]
+
+
+    def solve(self) -> np.ndarray:
+        """
+        Compute the posterior mean F
+        """
+        
+        theta = solve_kgrnc(self.X, self.Y, self.S, self.U, self.G, self.V, self.lamK, self.gamma, self.lam)
+
+        self.B = theta[:self.N].reshape(self.Y.shape)
+        self.w = theta[self.N:]
+
+        F = self.B + (self.X.reshape(-1, self.M) @ self.w).reshape(self.Y.shape)
+
+        return self.processor.postprocess(F)
+    
+
+    def sample(self, n_samples: int=1, seed: int=None) -> List[np.ndarray]:
+        """
+        Draw samples from the posterior distribution
+        """
+        
+        thetas = sample_kgrnc(self.X, self.Y, self.S, self.U, self.G, self.V, self.lamK, self.gamma, self.lam, n_samples, seed)
+
+        def f(theta):
+            return (theta[:self.N] + self.X.reshape(-1, self.M) @ theta[self.N:]).reshape(self.Y.shape)
+        
+        Fs = [f(theta) for theta in thetas]
+    
+        return [self.processor.postprocess(F) for F in Fs] 
+    
+    def estimate_marginal_variance(n_samples: int, mean: np.ndarray=None, seed: int=None) -> np.ndarray:
+        """
+        Estimate the marginal variance using a memory efficient generator pattern
+        """
+
+        def f(theta):
+            return (theta[:self.N] + self.X.reshape(-1, self.M) @ theta[self.N:]).reshape(self.Y.shape)
+        
+        if mean is None:
+            mean = self.solve()
+
+        var = np.zeros_like(mean)
+        
+        for k, sample in enumerate(generate_samples_kgrnc(self.X, self.Y, self.S, self.U, self.G, self.V, self.lamK, self.gamma, self.lam, n_samples, seed)):
+
+            F = f(sample)
+            
+            var = (k * var + (self.processor.postprocess(F) - mean) ** 2) / (k + 1)
+
+        return var

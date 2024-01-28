@@ -32,6 +32,11 @@ def solve_SPCGM(A_precon: Operator,
     x               The result of solving the linear system
     """
     out, nits = solve_CGM(A=A_precon, Y=Phi.T @ Y, max_iter=max_iter, tol=tol)
+
+    # print(type(out), out.shape)
+
+    # print(type(Phi), Phi.shape)
+
     return Phi @ out, nits
 
 
